@@ -1,24 +1,44 @@
-"""Background thread on the receiver: radio.listen -> on_packet (P2's ingest)."""
+"""Background radio thread: listen -> on_packet; shared send() for ACKs."""
 import logging
 import threading
 import time
 
-from radio import BaseRadio, get_radio
+from radio import BaseRadio, WioE5, get_radio
 
 log = logging.getLogger("radio_worker")
 _radio: BaseRadio | None = None
+_lock = threading.Lock()
+
+
+def get() -> BaseRadio:
+    global _radio
+    with _lock:
+        if _radio is None:
+            _radio = get_radio()
+        return _radio
+
+
+def send(payload: str) -> bool:
+    """Transmit, then re-arm RX so the listen loop keeps working."""
+    r = get()
+    ok = r.send(payload)
+    if isinstance(r, WioE5):
+        try:
+            r.arm_rx()
+        except Exception as e:
+            log.warning("re-arm RX after send failed: %s", e)
+    return ok
 
 
 def _run(on_packet) -> None:
     global _radio
     while True:
         try:
-            if _radio is None:
-                _radio = get_radio()
-            _radio.listen(on_packet)
+            get().listen(on_packet)
         except Exception as e:
             log.warning("radio worker error: %s; retrying in 2s", e)
-            _radio = None
+            with _lock:
+                _radio = None
             time.sleep(2)
 
 

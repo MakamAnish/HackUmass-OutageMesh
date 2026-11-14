@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from db import insert
-from protocol import decode
+from protocol import decode, decode_ack
 from triage import final_level, keyword_score
 
 logger = logging.getLogger(__name__)
@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 def ingest(payload: str, rssi: int | None = None, snr: float | None = None) -> dict | None:
     """Decode a packet, triage it, and store a row. Returns the stored row or None."""
+    if decode_ack(payload):
+        # ACKs are for the help point (sender), not the dashboard.
+        return None
     try:
         decoded = decode(payload)
         kw = keyword_score(decoded["category"], decoded["text"])

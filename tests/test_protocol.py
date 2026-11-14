@@ -1,6 +1,16 @@
 import pytest
 
-from protocol import MAX_PAYLOAD, MAX_TEXT, decode, encode, make_zone, next_id, sanitize
+from protocol import (
+    MAX_PAYLOAD,
+    MAX_TEXT,
+    decode,
+    decode_ack,
+    encode,
+    encode_ack,
+    make_zone,
+    next_id,
+    sanitize,
+)
 
 
 def test_round_trip():
@@ -60,3 +70,9 @@ def test_next_id_persists(tmp_path):
     counter = tmp_path / "counter.txt"
     assert next_id("a", counter) == "A1"
     assert next_id("A", counter) == "A2"
+
+
+def test_ack_round_trip():
+    assert encode_ack("A47") == "ACK|A47"
+    assert decode_ack("ACK|A47") == "A47"
+    assert decode_ack("A47|DUB-3-X|MED|hi") is None

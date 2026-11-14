@@ -5,13 +5,33 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Message sent</title>
 <style>
+:root{--ok:#1a7f4b;--wait:#9a6b00;--mute:#5d646b}
 body{margin:0;font:18px/1.45 Georgia,serif;background:#f6f5f1;color:#1b1f23;padding:2rem}
 a{color:#0b5cab}
+#ack{margin-top:1rem;font-weight:600;color:var(--wait)}
+#ack.ok{color:var(--ok)}
 </style>
 </head>
 <body>
 <h1>Message {{ msg_id }} sent</h1>
 <p>Responders have been notified over LoRa.</p>
+<p id="ack">Waiting for responders to acknowledge…</p>
 <p><a href="/">Send another</a></p>
+<script>
+const id={{ msg_id|tojson }};
+async function tick(){
+  try{
+    const j=await (await fetch("/api/ack/"+encodeURIComponent(id))).json();
+    if(j.acked){
+      const el=document.getElementById("ack");
+      el.className="ok";
+      el.textContent="Responders acknowledged your request. Help is coming.";
+      return;
+    }
+  }catch(e){}
+  setTimeout(tick,2000);
+}
+tick();
+</script>
 </body>
 </html>

@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Campus help request</title>
 <style>
-:root{--bg:#f6f5f1;--ink:#1b1f23;--mute:#5d646b;--line:#cfd2d4;--go:#0b5cab;--ok:#1a7f4b;--bad:#b3261e}
-@media(prefers-color-scheme:dark){:root{--bg:#14171a;--ink:#eef0f1;--mute:#9aa2a8;--line:#343a40;--go:#5aa2ee;--ok:#4cc88a;--bad:#ff8a80}}
+:root{--bg:#f6f5f1;--ink:#1b1f23;--mute:#5d646b;--line:#cfd2d4;--go:#0b5cab;--ok:#1a7f4b;--bad:#b3261e;--wait:#9a6b00}
+@media(prefers-color-scheme:dark){:root{--bg:#14171a;--ink:#eef0f1;--mute:#9aa2a8;--line:#343a40;--go:#5aa2ee;--ok:#4cc88a;--bad:#ff8a80;--wait:#e0b44c}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.45 Georgia,serif}
 main{max-width:30rem;margin:0 auto;padding:1.25rem}
@@ -24,6 +24,9 @@ textarea{min-height:6rem;resize:vertical}
 #go:disabled{opacity:.6}
 :focus-visible{outline:3px solid var(--go);outline-offset:2px}
 #msg{margin-top:1rem;font-weight:600;min-height:1.5rem}
+#ack{margin-top:.6rem;padding:.75rem 1rem;border-radius:.5rem;border:2px solid var(--line);display:none;font-weight:600}
+#ack.wait{display:block;border-color:var(--wait);color:var(--wait)}
+#ack.ok{display:block;border-color:var(--ok);color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
 </style>
 </head>
 <body>
@@ -41,9 +44,10 @@ textarea{min-height:6rem;resize:vertical}
 <div id="cnt">0 / 60</div>
 <button id="go">Send request</button>
 <div id="msg" role="status"></div>
+<div id="ack" role="status" aria-live="polite"></div>
 </main>
 <script>
-let cat="MED";
+let cat="MED", pollTimer=null;
 const $=id=>document.getElementById(id);
 $("cats").onclick=e=>{
   const b=e.target.closest("button");
@@ -52,11 +56,37 @@ $("cats").onclick=e=>{
   [...$("cats").children].forEach(x=>x.setAttribute("aria-pressed",x===b?"true":"false"));
 };
 $("text").oninput=()=>$("cnt").textContent=$("text").value.length+" / 60";
+
+function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
+
+function watchAck(id){
+  const box=$("ack");
+  box.className="wait";
+  box.textContent="Waiting for responders to acknowledge "+id+"…";
+  stopPoll();
+  let tries=0;
+  pollTimer=setInterval(async()=>{
+    tries++;
+    try{
+      const j=await (await fetch("/api/ack/"+encodeURIComponent(id))).json();
+      if(j.acked){
+        box.className="ok";
+        box.textContent="Responders acknowledged your request ("+id+"). Help is coming.";
+        stopPoll();
+      }
+    }catch(e){}
+    if(tries>90){stopPoll();} // ~3 min
+  },2000);
+}
+
 $("go").onclick=async()=>{
   const m=$("msg");
   $("go").disabled=true;
   m.style.color="";
   m.textContent="Sending...";
+  $("ack").className="";
+  $("ack").textContent="";
+  stopPoll();
   try{
     const r=await fetch("/send",{
       method:"POST",
@@ -69,6 +99,7 @@ $("go").onclick=async()=>{
       m.textContent="Sent as "+j.id+". Responders have been notified.";
       $("text").value="";
       $("cnt").textContent="0 / 60";
+      watchAck(j.id);
     }else{
       m.style.color="var(--bad)";
       m.textContent=j.error||"Send failed.";

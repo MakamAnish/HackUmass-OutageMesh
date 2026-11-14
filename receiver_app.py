@@ -11,6 +11,7 @@ from flask import Flask, jsonify, render_template, request
 
 from db import DB_PATH, init as init_db, list_messages, set_status
 from ingest import ingest
+from protocol import encode_ack
 import radio_worker
 
 load_dotenv()
@@ -49,7 +50,15 @@ def api_set_status(mid):
     if status not in {"ack", "resolved"}:
         return jsonify({"ok": False, "error": "status must be 'ack' or 'resolved'"}), 400
     set_status(mid, status)
-    return jsonify({"ok": True})
+    radio_ok = None
+    if status == "ack":
+        try:
+            radio_ok = radio_worker.send(encode_ack(mid))
+            logging.getLogger("receiver").info("ACK sent for %s ok=%s", mid, radio_ok)
+        except Exception as e:
+            radio_ok = False
+            logging.getLogger("receiver").warning("ACK radio send failed for %s: %s", mid, e)
+    return jsonify({"ok": True, "radio_ack": radio_ok})
 
 
 @app.get("/api/health")

@@ -75,3 +75,19 @@ def next_id(node_id: str, path: str | Path = "counter.txt") -> str:
         n = int(path.read_text().strip() or 0) + 1 if path.exists() else 1
         path.write_text(str(n))
     return f"{node_id.upper()}{n}"
+
+
+def encode_ack(msg_id: str) -> str:
+    """Responder -> help point: ACK|A47"""
+    msg_id = str(msg_id or "").strip().upper()
+    if not _ID_RE.match(msg_id):
+        raise ValueError(f"bad id: {msg_id!r}")
+    return f"ACK|{msg_id}"
+
+
+def decode_ack(payload: str) -> str | None:
+    """Return message id if payload is an ACK, else None."""
+    parts = (payload or "").strip().split("|")
+    if len(parts) == 2 and parts[0].upper() == "ACK" and _ID_RE.match(parts[1].strip().upper()):
+        return parts[1].strip().upper()
+    return None

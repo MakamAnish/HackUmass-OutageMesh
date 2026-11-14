@@ -102,6 +102,10 @@ class WioE5(BaseRadio):
                     log.warning("reconnect failed: %s", e2)
                 return False
 
+    def arm_rx(self) -> None:
+        with self.lock:
+            self._arm_rx()
+
     def _arm_rx(self) -> None:
         self._cmd("AT+TEST=RXLRPKT", "RXLRPKT")
 
@@ -163,27 +167,44 @@ class WioE5(BaseRadio):
 
 
 class FakeRadio(BaseRadio):
-    """UDP stand-in for LoRa. Sender and receiver must use the same SIM_HOST/SIM_PORT."""
+    """UDP stand-in for LoRa.
+
+    For two-way sim: sender TX 47000 / RX 47001, receiver TX 47001 / RX 47000.
+    """
 
     mode = "sim"
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 47000):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int | None = None,
+        tx_port: int | None = None,
+        rx_port: int | None = None,
+    ):
         super().__init__()
-        self.addr = (host, port)
+        if port is not None:
+            tx_port = rx_port = port
+        self.tx_addr = (host, tx_port if tx_port is not None else 47000)
+        self.rx_port = rx_port if rx_port is not None else 47000
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     def send(self, payload: str) -> bool:
-        self.sock.sendto(payload.encode(), self.addr)
+        self.sock.sendto(payload.encode(), self.tx_addr)
         return True
 
     def listen(self, on_packet) -> None:
         rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        rx.bind(("0.0.0.0", self.addr[1]))
-        log.info("FakeRadio listening on UDP %s", self.addr[1])
+        rx.bind(("0.0.0.0", self.rx_port))
+        log.info("FakeRadio listening on UDP %s (tx -> %s)", self.rx_port, self.tx_addr)
         while True:
             data, _ = rx.recvfrom(1024)
             self.last_rx = _now()
-            WioE5._deliver(on_packet, data.decode(errors="replace"), -random.randint(45, 110), round(random.uniform(-5, 10), 1))
+            WioE5._deliver(
+                on_packet,
+                data.decode(errors="replace"),
+                -random.randint(45, 110),
+                round(random.uniform(-5, 10), 1),
+            )
 
     def close(self) -> None:
         self.sock.close()
@@ -192,5 +213,9 @@ class FakeRadio(BaseRadio):
 def get_radio() -> BaseRadio:
     load_dotenv()
     if os.getenv("SIMULATE", "0") == "1":
-        return FakeRadio(os.getenv("SIM_HOST", "127.0.0.1"), int(os.getenv("SIM_PORT", "47000")))
+        host = os.getenv("SIM_HOST", "127.0.0.1")
+        # Bidirectional sim: help msgs on 47000, ACKs on 47001
+        if os.getenv("ROLE", "sender") == "receiver":
+            return FakeRadio(host, tx_port=47001, rx_port=47000)
+        return FakeRadio(host, tx_port=47000, rx_port=47001)
     return WioE5(os.getenv("RADIO_PORT", "COM7"))
