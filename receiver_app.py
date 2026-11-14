@@ -47,14 +47,17 @@ def api_map():
 def api_set_status(mid):
     data = request.get_json(silent=True) or {}
     status = data.get("status") or request.form.get("status")
+    reply_text = (data.get("reply_text") or request.form.get("reply_text") or "").strip()
     if status not in {"ack", "resolved"}:
         return jsonify({"ok": False, "error": "status must be 'ack' or 'resolved'"}), 400
     set_status(mid, status)
     radio_ok = None
     if status == "ack":
         try:
-            radio_ok = radio_worker.send(encode_ack(mid))
-            logging.getLogger("receiver").info("ACK sent for %s ok=%s", mid, radio_ok)
+            radio_ok = radio_worker.send(encode_ack(mid, reply_text))
+            logging.getLogger("receiver").info(
+                "ACK sent for %s reply=%r ok=%s", mid, reply_text, radio_ok
+            )
         except Exception as e:
             radio_ok = False
             logging.getLogger("receiver").warning("ACK radio send failed for %s: %s", mid, e)

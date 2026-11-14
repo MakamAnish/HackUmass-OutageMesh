@@ -23,13 +23,17 @@ h1{font-size:1.3rem;margin:0}
 .pin{position:absolute;transform:translate(-50%,-100%);width:1.6rem;height:1.6rem;border-radius:50% 50% 50% 0;rotate:-45deg;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);cursor:pointer;z-index:2}
 .pin.active{outline:3px solid var(--ink);outline-offset:2px;z-index:3}
 .pin .n{position:absolute;inset:0;display:grid;place-items:center;rotate:45deg;color:#fff;font:700 .7rem system-ui;pointer-events:none}
-.m{display:grid;grid-template-columns:5.5rem 1fr auto;gap:1rem;align-items:center;background:var(--card);border:1px solid var(--line);border-left:8px solid var(--c);border-radius:.4rem;padding:.8rem 1rem;margin-bottom:.6rem;cursor:pointer}
+.sec{font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:1rem 0 .4rem;font-weight:700}
+.sec:first-child{margin-top:0}
+.m{display:grid;grid-template-columns:5.5rem 1fr auto;gap:1rem;align-items:start;background:var(--card);border:1px solid var(--line);border-left:8px solid var(--c);border-radius:.4rem;padding:.8rem 1rem;margin-bottom:.6rem;cursor:pointer}
 .m.selected{box-shadow:inset 0 0 0 2px var(--ink)}
 .m.resolved{opacity:.45}
-.u{font-weight:800;font-size:1rem;color:var(--c);text-align:center;letter-spacing:.02em}
+.u{font-weight:800;font-size:1rem;color:var(--c);text-align:center;letter-spacing:.02em;padding-top:.2rem}
 .t{font-size:1.1rem;font-weight:600}
 .meta{color:var(--mute);font-size:.85rem}
-.act button{font:inherit;font-size:.85rem;margin-left:.3rem;padding:.35rem .6rem;border:1px solid var(--line);border-radius:.4rem;background:transparent;color:var(--ink);cursor:pointer}
+.act{display:flex;flex-direction:column;gap:.35rem;align-items:stretch;min-width:9rem}
+.act input{font:inherit;font-size:.8rem;padding:.3rem .4rem;border:1px solid var(--line);border-radius:.35rem;background:transparent;color:var(--ink);width:100%}
+.act button{font:inherit;font-size:.85rem;padding:.35rem .6rem;border:1px solid var(--line);border-radius:.4rem;background:transparent;color:var(--ink);cursor:pointer}
 .empty{color:var(--mute);padding:2rem;text-align:center}
 @media(max-width:560px){.m{grid-template-columns:4.5rem 1fr}.act{grid-column:1/-1}}
 @keyframes flash{from{background:color-mix(in srgb,var(--c) 30%,var(--card))}}
@@ -60,6 +64,7 @@ h1{font-size:1.3rem;margin:0}
 <script>
 const COL={HIGH:"var(--high)",MEDIUM:"var(--med)",LOW:"var(--low)"};
 const COL_HEX={HIGH:"#b3261e",MEDIUM:"#d9622b",LOW:"#2f7d5b"};
+const ORDER=["HIGH","MEDIUM","LOW"];
 let seen=new Set(), first=true, selected=null, helpPoints=null, rowsCache=[];
 
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e}
@@ -99,7 +104,7 @@ function renderPins(rows){
     (byNode[key]=byNode[key]||{node,msgs:[]}).msgs.push(r);
   });
   Object.values(byNode).forEach(({node,msgs})=>{
-    const top=msgs.sort((a,b)=>({HIGH:0,MEDIUM:1,LOW:2}[a.level]||3)-({HIGH:0,MEDIUM:1,LOW:2}[b.level]||3))[0];
+    const top=msgs.sort((a,b)=>(ORDER.indexOf(a.level)-ORDER.indexOf(b.level)))[0];
     const pin=el("div","pin"+(selected && msgs.some(m=>m.id===selected)?" active":""));
     pin.style.left=node.x+"%";
     pin.style.top=node.y+"%";
@@ -111,54 +116,74 @@ function renderPins(rows){
   });
 }
 
-async function setStatus(id,status){
+async function setStatus(id,status,replyText){
   await fetch("/api/messages/"+encodeURIComponent(id)+"/status",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({status})
+    body:JSON.stringify({status, reply_text: replyText||""})
   });
   await load();
+}
+
+function makeCard(r){
+  const level=r.level||"LOW";
+  const node=nodeFromMsg(r);
+  const d=el("div","m"+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
+  d.style.setProperty("--c",COL[level]||COL.LOW);
+  d.onclick=()=>{selected=r.id;showMapFor(r);renderList(rowsCache);renderPins(rowsCache);};
+  const u=el("div","u",level);
+  const mid=el("div");
+  mid.append(el("div","t",r.text||""));
+  const when=r.received_at?new Date(r.received_at).toLocaleTimeString():"";
+  const where=node?node.label:(r.zone||"unknown help point");
+  const room=r.room?(" · room "+r.room):"";
+  const reasons=r.kw_reasons?(" · "+r.kw_reasons):"";
+  mid.append(el("div","meta",r.id+" · "+where+room+" · "+(r.category||"")+" · "+when+(r.rssi!=null?" · "+r.rssi+" dBm":"")+" · "+(r.status||"new")+reasons));
+  const a=el("div","act");
+  a.onclick=e=>e.stopPropagation();
+  if(r.status!=="ack" && r.status!=="resolved"){
+    const inp=el("input");
+    inp.type="text";
+    inp.maxLength=40;
+    inp.placeholder="Optional reply to sender";
+    inp.id="reply-"+r.id;
+    a.append(inp);
+    const b=el("button","","Acknowledge");
+    b.onclick=()=>setStatus(r.id,"ack",inp.value.trim());
+    a.append(b);
+  }else if(r.status==="ack"){
+    a.append(el("div","meta","Acknowledged"));
+  }
+  if(r.status!=="resolved"){
+    const b=el("button","","Resolve");
+    b.onclick=()=>setStatus(r.id,"resolved");
+    a.append(b);
+  }
+  d.append(u,mid,a);
+  seen.add(r.id);
+  return d;
 }
 
 function renderList(rows){
   const list=document.getElementById("list");
   list.replaceChildren();
-  const open=rows.filter(r=>r.status!=="resolved").length;
-  document.getElementById("stats").textContent=rows.length+" messages, "+open+" open";
+  const open=rows.filter(r=>r.status!=="resolved");
+  const done=rows.filter(r=>r.status==="resolved");
+  document.getElementById("stats").textContent=rows.length+" messages · "+open.length+" open · sorted HIGH → LOW";
   if(!rows.length){
     list.append(el("div","empty","No messages yet. Waiting for the radio."));
     return;
   }
-  rows.forEach(r=>{
-    const level=r.level||"LOW";
-    const node=nodeFromMsg(r);
-    const d=el("div","m"+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
-    d.style.setProperty("--c",COL[level]||COL.LOW);
-    d.onclick=()=>{selected=r.id;showMapFor(r);renderList(rowsCache);renderPins(rowsCache);};
-    const u=el("div","u",level);
-    const mid=el("div");
-    mid.append(el("div","t",r.text||""));
-    const when=r.received_at?new Date(r.received_at).toLocaleTimeString():"";
-    const where=node?node.label:(r.zone||"unknown help point");
-    const room=r.room?(" · room "+r.room):"";
-    const reasons=r.kw_reasons?(" · "+r.kw_reasons):"";
-    mid.append(el("div","meta",where+room+" · "+(r.category||"")+" · "+when+(r.rssi!=null?" · "+r.rssi+" dBm":"")+" · "+(r.status||"new")+reasons));
-    const a=el("div","act");
-    a.onclick=e=>e.stopPropagation();
-    if(r.status!=="ack"){
-      const b=el("button","","Acknowledge");
-      b.onclick=()=>setStatus(r.id,"ack");
-      a.append(b);
-    }
-    if(r.status!=="resolved"){
-      const b=el("button","","Resolve");
-      b.onclick=()=>setStatus(r.id,"resolved");
-      a.append(b);
-    }
-    d.append(u,mid,a);
-    list.append(d);
-    seen.add(r.id);
+  ORDER.forEach(level=>{
+    const group=open.filter(r=>(r.level||"LOW")===level);
+    if(!group.length)return;
+    list.append(el("div","sec",level+" priority ("+group.length+")"));
+    group.forEach(r=>list.append(makeCard(r)));
   });
+  if(done.length){
+    list.append(el("div","sec","Resolved ("+done.length+")"));
+    done.forEach(r=>list.append(makeCard(r)));
+  }
 }
 
 async function load(){

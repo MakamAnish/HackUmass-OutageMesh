@@ -25,6 +25,7 @@ htmlcov/
 *.sqlite3
 counter.txt
 outage.db
+outgoing.db
 
 # OS / editor
 .DS_Store

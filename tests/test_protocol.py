@@ -74,5 +74,7 @@ def test_next_id_persists(tmp_path):
 
 def test_ack_round_trip():
     assert encode_ack("A47") == "ACK|A47"
-    assert decode_ack("ACK|A47") == "A47"
+    assert decode_ack("ACK|A47") == {"id": "A47", "text": ""}
+    assert decode_ack("ACK|A47|help en route") == {"id": "A47", "text": "help en route"}
+    assert encode_ack("A47", 'help, "now"') == "ACK|A47|help now"
     assert decode_ack("A47|DUB-3-X|MED|hi") is None

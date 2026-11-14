@@ -115,7 +115,13 @@ def list_messages(since: str | None = None, db_path: str = DB_PATH):
         if since:
             query += " WHERE received_at >= ?"
             params.append(since)
-        query += " ORDER BY CASE level WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 WHEN 'LOW' THEN 2 ELSE 3 END, received_at DESC"
+        # Open items first, then urgency (HIGH > MEDIUM > LOW), then newest.
+        query += """
+          ORDER BY
+            CASE status WHEN 'resolved' THEN 1 ELSE 0 END,
+            CASE level WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 WHEN 'LOW' THEN 2 ELSE 3 END,
+            received_at DESC
+        """
         rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
     finally:

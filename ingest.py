@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def ingest(payload: str, rssi: int | None = None, snr: float | None = None) -> dict | None:
     """Decode a packet, triage it, and store a row. Returns the stored row or None."""
-    if decode_ack(payload):
+    if decode_ack(payload) is not None:
         # ACKs are for the help point (sender), not the dashboard.
         return None
     try:

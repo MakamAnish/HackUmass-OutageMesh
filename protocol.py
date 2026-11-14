@@ -8,6 +8,7 @@ from pathlib import Path
 
 CATEGORIES = ("MED", "TRAP", "WATER", "SAFE", "OTHER")
 MAX_TEXT = 60
+MAX_ACK_TEXT = 40
 MAX_PAYLOAD = 100
 NO_ROOM = "X"
 
@@ -77,17 +78,25 @@ def next_id(node_id: str, path: str | Path = "counter.txt") -> str:
     return f"{node_id.upper()}{n}"
 
 
-def encode_ack(msg_id: str) -> str:
-    """Responder -> help point: ACK|A47"""
+def encode_ack(msg_id: str, reply_text: str = "") -> str:
+    """Responder -> help point: ACK|A47 or ACK|A47|optional reply."""
     msg_id = str(msg_id or "").strip().upper()
     if not _ID_RE.match(msg_id):
         raise ValueError(f"bad id: {msg_id!r}")
-    return f"ACK|{msg_id}"
+    note = sanitize(reply_text)[:MAX_ACK_TEXT]
+    payload = f"ACK|{msg_id}|{note}" if note else f"ACK|{msg_id}"
+    if len(payload.encode()) > MAX_PAYLOAD:
+        raise ValueError(f"ack too long: {len(payload)} bytes")
+    return payload
 
 
-def decode_ack(payload: str) -> str | None:
-    """Return message id if payload is an ACK, else None."""
+def decode_ack(payload: str) -> dict | None:
+    """Return {id, text} if payload is an ACK, else None."""
     parts = (payload or "").strip().split("|")
-    if len(parts) == 2 and parts[0].upper() == "ACK" and _ID_RE.match(parts[1].strip().upper()):
-        return parts[1].strip().upper()
-    return None
+    if len(parts) < 2 or parts[0].upper() != "ACK":
+        return None
+    msg_id = parts[1].strip().upper()
+    if not _ID_RE.match(msg_id):
+        return None
+    text = sanitize("|".join(parts[2:])) if len(parts) > 2 else ""
+    return {"id": msg_id, "text": text[:MAX_ACK_TEXT]}

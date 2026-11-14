@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Campus help request</title>
 <style>
-:root{--bg:#f6f5f1;--ink:#1b1f23;--mute:#5d646b;--line:#cfd2d4;--go:#0b5cab;--ok:#1a7f4b;--bad:#b3261e;--wait:#9a6b00}
-@media(prefers-color-scheme:dark){:root{--bg:#14171a;--ink:#eef0f1;--mute:#9aa2a8;--line:#343a40;--go:#5aa2ee;--ok:#4cc88a;--bad:#ff8a80;--wait:#e0b44c}}
+:root{--bg:#f6f5f1;--ink:#1b1f23;--mute:#5d646b;--line:#cfd2d4;--go:#0b5cab;--ok:#1a7f4b;--bad:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#14171a;--ink:#eef0f1;--mute:#9aa2a8;--line:#343a40;--go:#5aa2ee;--ok:#4cc88a;--bad:#ff8a80}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.45 Georgia,serif}
 main{max-width:30rem;margin:0 auto;padding:1.25rem}
@@ -18,21 +18,21 @@ label{display:block;font-weight:600;margin:1.1rem 0 .4rem}
 .cats button[aria-pressed=true]{border-color:var(--go);background:color-mix(in srgb,var(--go) 14%,transparent);font-weight:700}
 input,textarea{width:100%}
 textarea{min-height:6rem;resize:vertical}
-.hint{color:var(--mute);font-size:.85rem;font-weight:400;margin:.25rem 0 0}
+.hint{color:var(--mute);font-size:.85rem;font-weight:400}
 #cnt{color:var(--mute);font-size:.85rem;text-align:right}
 #go{width:100%;margin-top:1.2rem;padding:1rem;font:700 1.1rem Georgia,serif;background:var(--go);color:#fff;border:0;border-radius:.5rem}
 #go:disabled{opacity:.6}
 :focus-visible{outline:3px solid var(--go);outline-offset:2px}
 #msg{margin-top:1rem;font-weight:600;min-height:1.5rem}
-#ack{margin-top:.6rem;padding:.75rem 1rem;border-radius:.5rem;border:2px solid var(--line);display:none;font-weight:600}
-#ack.wait{display:block;border-color:var(--wait);color:var(--wait)}
-#ack.ok{display:block;border-color:var(--ok);color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+nav{margin-bottom:1rem}
+nav a{color:var(--go)}
 </style>
 </head>
 <body>
 <main>
+<nav><a href="/requests">My requests</a></nav>
 <h1>Send a help request</h1>
-<p class="s">No app needed. Responders already know you are near this help point. Room number is optional.</p>
+<p class="s">No app needed. After you send, you will see status updates if responders acknowledge.</p>
 <label>What is the situation?</label>
 <div class="cats" id="cats">
 {% for k,v in cats.items() %}<button type="button" data-c="{{k}}" aria-pressed="{{ 'true' if k=='MED' else 'false' }}">{{v}}</button>{% endfor %}
@@ -44,11 +44,23 @@ textarea{min-height:6rem;resize:vertical}
 <div id="cnt">0 / 60</div>
 <button id="go">Send request</button>
 <div id="msg" role="status"></div>
-<div id="ack" role="status" aria-live="polite"></div>
 </main>
 <script>
-let cat="MED", pollTimer=null;
+let cat="MED";
 const $=id=>document.getElementById(id);
+function clientId(){
+  let id=localStorage.getItem("om_client");
+  if(!id){
+    id=(crypto.randomUUID&&crypto.randomUUID())||("c"+Date.now()+"_"+Math.random().toString(16).slice(2));
+    localStorage.setItem("om_client",id);
+  }
+  return id;
+}
+function rememberId(msgId){
+  const key="om_ids";
+  const ids=JSON.parse(localStorage.getItem(key)||"[]");
+  if(!ids.includes(msgId)){ids.unshift(msgId);localStorage.setItem(key,JSON.stringify(ids.slice(0,40)));}
+}
 $("cats").onclick=e=>{
   const b=e.target.closest("button");
   if(!b)return;
@@ -56,54 +68,32 @@ $("cats").onclick=e=>{
   [...$("cats").children].forEach(x=>x.setAttribute("aria-pressed",x===b?"true":"false"));
 };
 $("text").oninput=()=>$("cnt").textContent=$("text").value.length+" / 60";
-
-function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null;}}
-
-function watchAck(id){
-  const box=$("ack");
-  box.className="wait";
-  box.textContent="Waiting for responders to acknowledge "+id+"…";
-  stopPoll();
-  let tries=0;
-  pollTimer=setInterval(async()=>{
-    tries++;
-    try{
-      const j=await (await fetch("/api/ack/"+encodeURIComponent(id))).json();
-      if(j.acked){
-        box.className="ok";
-        box.textContent="Responders acknowledged your request ("+id+"). Help is coming.";
-        stopPoll();
-      }
-    }catch(e){}
-    if(tries>90){stopPoll();} // ~3 min
-  },2000);
-}
-
 $("go").onclick=async()=>{
   const m=$("msg");
   $("go").disabled=true;
   m.style.color="";
   m.textContent="Sending...";
-  $("ack").className="";
-  $("ack").textContent="";
-  stopPoll();
   try{
     const r=await fetch("/send",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({room:$("room").value.trim(),category:cat,text:$("text").value})
+      body:JSON.stringify({
+        room:$("room").value.trim(),
+        category:cat,
+        text:$("text").value,
+        client_id:clientId()
+      })
     });
     const j=await r.json();
     if(j.ok){
+      rememberId(j.id);
       m.style.color="var(--ok)";
-      m.textContent="Sent as "+j.id+". Responders have been notified.";
-      $("text").value="";
-      $("cnt").textContent="0 / 60";
-      watchAck(j.id);
-    }else{
-      m.style.color="var(--bad)";
-      m.textContent=j.error||"Send failed.";
+      m.textContent="Sent as "+j.id+". Opening your requests…";
+      location.href=j.redirect||("/requests?focus="+encodeURIComponent(j.id));
+      return;
     }
+    m.style.color="var(--bad)";
+    m.textContent=j.error||"Send failed.";
   }catch(e){
     m.style.color="var(--bad)";
     m.textContent="Could not reach the relay. Check your Wi-Fi connection.";

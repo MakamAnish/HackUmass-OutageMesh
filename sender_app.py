@@ -1,16 +1,15 @@
-"""Laptop A (help point): web form -> LoRa send; listen for responder ACKs."""
+"""Laptop A (help point): form -> LoRa; status page; listen for responder ACKs."""
 import json
 import logging
 import os
-import threading
-from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 
-from protocol import CATEGORIES, decode_ack, encode, make_zone, next_id, sanitize
+import outgoing
 import radio_worker
+from protocol import CATEGORIES, decode_ack, encode, make_zone, next_id, sanitize
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
@@ -22,23 +21,17 @@ FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 
 app = Flask(__name__)
 log = logging.getLogger("sender")
+outgoing.init()
 
 CATS = {"MED": "Medical", "TRAP": "Trapped", "WATER": "Water", "SAFE": "Safe", "OTHER": "Other"}
 
-# msg_id -> {"sent_at": iso, "acked_at": iso|None}
-_status: dict[str, dict] = {}
-_status_lock = threading.Lock()
-
 
 def _on_packet(payload: str, rssi: int | None, snr: float | None) -> None:
-    msg_id = decode_ack(payload)
-    if not msg_id:
+    ack = decode_ack(payload)
+    if ack is None:
         return
-    with _status_lock:
-        row = _status.get(msg_id) or {"sent_at": None, "acked_at": None}
-        row["acked_at"] = datetime.now(timezone.utc).isoformat()
-        _status[msg_id] = row
-    log.info("ACK received for %s (rssi=%s)", msg_id, rssi)
+    outgoing.mark_acked(ack["id"], ack.get("text") or None)
+    log.info("ACK for %s reply=%r rssi=%s", ack["id"], ack.get("text"), rssi)
 
 
 radio_worker.start(_on_packet)
@@ -48,6 +41,11 @@ log.info("listening for responder ACKs")
 @app.get("/")
 def index():
     return render_template("form.html", cats=CATS)
+
+
+@app.get("/requests")
+def requests_page():
+    return render_template("requests.html")
 
 
 @app.post("/send")
@@ -60,6 +58,7 @@ def send():
     room = (payload.get("room") or payload.get("zone") or "").strip() or None
     category = str(payload.get("category") or "OTHER").upper()
     text = sanitize(payload.get("text") or "")
+    client_id = sanitize(payload.get("client_id") or "")[:40]
 
     if not text:
         return jsonify({"ok": False, "error": "Type a short message first."}), 400
@@ -80,18 +79,36 @@ def send():
     if not ok:
         return jsonify({"ok": False, "error": "Radio did not confirm. Try again."}), 500
 
-    with _status_lock:
-        _status[msg_id] = {
-            "sent_at": datetime.now(timezone.utc).isoformat(),
-            "acked_at": None,
+    outgoing.record(msg_id, zone, category, text, client_id=client_id or None)
+    return jsonify(
+        {
+            "ok": True,
+            "id": msg_id,
+            "zone": zone,
+            "payload": packet,
+            "redirect": url_for("requests_page") + f"?focus={msg_id}",
         }
-    return jsonify({"ok": True, "id": msg_id, "zone": zone, "payload": packet})
+    )
+
+
+@app.get("/api/my-requests")
+def api_my_requests():
+    client_id = (request.args.get("client_id") or "").strip()
+    ids = [x.strip().upper() for x in (request.args.get("ids") or "").split(",") if x.strip()]
+    rows = []
+    if client_id:
+        rows = outgoing.list_for_client(client_id)
+    if ids:
+        by_id = {r["id"]: r for r in rows}
+        for r in outgoing.list_by_ids(ids):
+            by_id[r["id"]] = r
+        rows = sorted(by_id.values(), key=lambda r: r.get("sent_at") or "", reverse=True)
+    return jsonify(rows)
 
 
 @app.get("/api/ack/<msg_id>")
 def api_ack(msg_id):
-    with _status_lock:
-        row = _status.get(msg_id.upper()) or _status.get(msg_id)
+    row = outgoing.get_one(msg_id.upper())
     if not row:
         return jsonify({"ok": True, "id": msg_id, "acked": False, "known": False})
     return jsonify(
@@ -102,13 +119,17 @@ def api_ack(msg_id):
             "acked": row.get("acked_at") is not None,
             "acked_at": row.get("acked_at"),
             "sent_at": row.get("sent_at"),
+            "reply_text": row.get("reply_text") or "",
+            "text": row.get("text"),
+            "category": row.get("category"),
+            "zone": row.get("zone"),
         }
     )
 
 
 @app.get("/sent/<msg_id>")
 def sent(msg_id):
-    return render_template("sent.html", msg_id=msg_id)
+    return redirect(url_for("requests_page") + f"?focus={msg_id}")
 
 
 @app.get("/api/building")
