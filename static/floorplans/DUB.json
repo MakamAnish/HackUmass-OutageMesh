@@ -1,0 +1,13 @@
+﻿{
+  "building": "DUB",
+  "name": "Du Bois Library",
+  "floors": {
+    "3": {
+      "image": "DUB-3.png",
+      "rooms": [
+        {"code": "F14", "label": "Room 314", "x": 12, "y": 40, "w": 10, "h": 8},
+        {"code": "X", "label": "No room selected", "x": 70, "y": 70, "w": 12, "h": 8}
+      ]
+    }
+  }
+}

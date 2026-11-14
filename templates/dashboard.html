@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Responder dashboard</title>
+<style>
+:root{--bg:#f3f4f2;--card:#fff;--ink:#16191c;--mute:#5b6268;--line:#d5d8da;--high:#b3261e;--med:#d9622b;--low:#2f7d5b}
+@media(prefers-color-scheme:dark){:root{--bg:#121416;--card:#1b1e21;--ink:#eceeef;--mute:#98a0a6;--line:#33383d;--high:#ff7b70;--med:#ff9a62;--low:#5fcf9a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 Georgia,serif}
+header{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;justify-content:space-between;padding:1rem 1.5rem;border-bottom:1px solid var(--line)}
+h1{font-size:1.3rem;margin:0}
+#stats{color:var(--mute)}
+.tools button{font:inherit;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:.4rem;padding:.4rem .8rem;margin-left:.4rem;cursor:pointer}
+main{max-width:56rem;margin:0 auto;padding:1rem 1.5rem}
+.m{display:grid;grid-template-columns:5.5rem 1fr auto;gap:1rem;align-items:center;background:var(--card);border:1px solid var(--line);border-left:8px solid var(--c);border-radius:.4rem;padding:.8rem 1rem;margin-bottom:.6rem}
+.m.resolved{opacity:.45}
+.u{font-weight:800;font-size:1rem;color:var(--c);text-align:center;letter-spacing:.02em}
+.t{font-size:1.1rem;font-weight:600}
+.meta{color:var(--mute);font-size:.85rem}
+.act button{font:inherit;font-size:.85rem;margin-left:.3rem;padding:.35rem .6rem;border:1px solid var(--line);border-radius:.4rem;background:transparent;color:var(--ink);cursor:pointer}
+.empty{color:var(--mute);padding:2rem;text-align:center}
+@media(max-width:560px){.m{grid-template-columns:4.5rem 1fr}.act{grid-column:1/-1}}
+@keyframes flash{from{background:color-mix(in srgb,var(--c) 30%,var(--card))}}
+.m.fresh{animation:flash 1.5s}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Responder dashboard</h1>
+    <div id="stats"></div>
+  </div>
+  <div class="tools">
+    <button id="sim" type="button">Simulate message</button>
+    <button id="clr" type="button">Clear all</button>
+  </div>
+</header>
+<main id="list"><div class="empty">No messages yet. Waiting for the radio.</div></main>
+<script>
+const COL={HIGH:"var(--high)",MEDIUM:"var(--med)",LOW:"var(--low)"};
+let seen=new Set(), first=true;
+function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e}
+async function setStatus(id,status){
+  await fetch("/api/messages/"+encodeURIComponent(id)+"/status",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({status})
+  });
+  await load();
+}
+async function load(){
+  const rows=await (await fetch("/api/messages")).json();
+  const list=document.getElementById("list");
+  list.replaceChildren();
+  const open=rows.filter(r=>r.status!=="resolved").length;
+  document.getElementById("stats").textContent=rows.length+" messages, "+open+" open";
+  if(!rows.length){
+    list.append(el("div","empty","No messages yet. Waiting for the radio."));
+    first=false;
+    return;
+  }
+  rows.forEach(r=>{
+    const level=r.level||"LOW";
+    const d=el("div","m"+(r.status==="resolved"?" resolved":"")+((!first&&!seen.has(r.id))?" fresh":""));
+    d.style.setProperty("--c",COL[level]||COL.LOW);
+    const u=el("div","u",level);
+    const mid=el("div");
+    mid.append(el("div","t",r.text||""));
+    const when=r.received_at?new Date(r.received_at).toLocaleTimeString():"";
+    const reasons=r.kw_reasons?(" · "+r.kw_reasons):"";
+    mid.append(el("div","meta",(r.zone||"")+" · "+(r.category||"")+" · "+when+(r.rssi!=null?" · "+r.rssi+" dBm":"")+" · "+(r.status||"new")+reasons));
+    const a=el("div","act");
+    if(r.status!=="ack"){
+      const b=el("button","","Acknowledge");
+      b.onclick=()=>setStatus(r.id,"ack");
+      a.append(b);
+    }
+    if(r.status!=="resolved"){
+      const b=el("button","","Resolve");
+      b.onclick=()=>setStatus(r.id,"resolved");
+      a.append(b);
+    }
+    d.append(u,mid,a);
+    list.append(d);
+    seen.add(r.id);
+  });
+  first=false;
+}
+document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load();};
+document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;await load();}};
+load();
+setInterval(load,2000);
+</script>
+</body>
+</html>
