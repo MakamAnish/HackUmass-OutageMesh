@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" role="img" aria-label="Du Bois floor 3 placeholder">
+  <rect width="800" height="500" fill="#e8e4dc"/>
+  <rect x="40" y="40" width="720" height="420" fill="#f7f4ee" stroke="#2c3338" stroke-width="4"/>
+  <path d="M40 180 H760 M40 320 H760 M280 40 V460 M520 40 V460" fill="none" stroke="#b7b1a5" stroke-width="3"/>
+  <rect x="40" y="180" width="80" height="140" fill="#d9e6f2" stroke="#2c3338" stroke-width="3"/>
+  <text x="80" y="255" text-anchor="middle" font-family="Georgia,serif" font-size="18" fill="#2c3338">Lobby</text>
+  <text x="400" y="30" text-anchor="middle" font-family="Georgia,serif" font-size="20" fill="#2c3338">Du Bois  Floor 3 (replace with real floor plan)</text>
+  <text x="160" y="120" font-family="Georgia,serif" font-size="16" fill="#6b6460">Wing A</text>
+  <text x="400" y="120" font-family="Georgia,serif" font-size="16" fill="#6b6460">Center</text>
+  <text x="640" y="120" font-family="Georgia,serif" font-size="16" fill="#6b6460">Wing B</text>
+</svg>

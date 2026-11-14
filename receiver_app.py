@@ -1,8 +1,10 @@
 """Laptop B (responder post): LoRa receive -> SQLite -> dashboard. Run: python receiver_app.py"""
+import json
 import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
@@ -15,6 +17,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
 
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5001"))
+MAP_PATH = Path(__file__).resolve().parent / "static" / "floorplans" / "help_points.json"
 
 app = Flask(__name__)
 init_db()
@@ -30,6 +33,13 @@ def home():
 @app.get("/api/messages")
 def messages():
     return jsonify(list_messages(since=request.args.get("since")))
+
+
+@app.get("/api/map")
+def api_map():
+    """Fixed Wio / help-point positions on floor maps (not phone GPS)."""
+    with MAP_PATH.open(encoding="utf-8") as fh:
+        return jsonify(json.load(fh))
 
 
 @app.post("/api/messages/<mid>/status")
@@ -57,7 +67,8 @@ def health():
 
 @app.post("/api/simulate")
 def simulate():
-    ingest("A99|DUB-3-F14|MED|needs fridge for insulin", rssi=-55, snr=12.0)
+    # No room from sender — location is help point A on the floor map.
+    ingest("A99|DUB-3-X|MED|needs fridge for insulin", rssi=-55, snr=12.0)
     return jsonify({"ok": True})
 
 

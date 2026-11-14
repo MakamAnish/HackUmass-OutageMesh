@@ -14,6 +14,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
 
 BUILDING = os.getenv("BUILDING", "DUB")
+FLOOR = os.getenv("FLOOR", "3")
 NODE_ID = os.getenv("NODE_ID", "A")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 
@@ -22,7 +23,6 @@ _radio = None
 log = logging.getLogger("sender")
 
 CATS = {"MED": "Medical", "TRAP": "Trapped", "WATER": "Water", "SAFE": "Safe", "OTHER": "Other"}
-ZONES = [f"F{i}" for i in range(1, 15)] + ["X"]
 
 
 def radio():
@@ -35,7 +35,7 @@ def radio():
 
 @app.get("/")
 def index():
-    return render_template("form.html", zones=ZONES, cats=CATS)
+    return render_template("form.html", cats=CATS)
 
 
 @app.post("/send")
@@ -44,8 +44,10 @@ def send():
     if not payload and request.form:
         payload = request.form.to_dict()
 
-    floor = str(payload.get("floor") or "3")
-    room = payload.get("room") or payload.get("zone") or "X"
+    # Location defaults to this help point (BUILDING/FLOOR from .env).
+    # Room is optional — blank means responders only know the Wio location.
+    floor = str(payload.get("floor") or FLOOR)
+    room = (payload.get("room") or payload.get("zone") or "").strip() or None
     category = str(payload.get("category") or "OTHER").upper()
     text = sanitize(payload.get("text") or "")
 

@@ -1,0 +1,26 @@
+{
+  "maps": {
+    "DUB-3": {
+      "image": "DUB-3.svg",
+      "label": "Du Bois Library — Floor 3"
+    }
+  },
+  "nodes": {
+    "A": {
+      "building": "DUB",
+      "floor": "3",
+      "map": "DUB-3",
+      "x": 48,
+      "y": 62,
+      "label": "Help point A (Wio) — lobby"
+    },
+    "B": {
+      "building": "DUB",
+      "floor": "3",
+      "map": "DUB-3",
+      "x": 72,
+      "y": 28,
+      "label": "Help point B (Wio) — east wing"
+    }
+  }
+}

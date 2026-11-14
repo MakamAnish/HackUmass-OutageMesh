@@ -14,10 +14,11 @@ h1{font-size:1.6rem;margin:.2rem 0 .3rem}
 p.s{color:var(--mute);margin:0 0 1.2rem}
 label{display:block;font-weight:600;margin:1.1rem 0 .4rem}
 .cats{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
-.cats button,select,textarea{font:inherit;color:var(--ink);background:transparent;border:2px solid var(--line);border-radius:.5rem;padding:.8rem}
+.cats button,input,textarea{font:inherit;color:var(--ink);background:transparent;border:2px solid var(--line);border-radius:.5rem;padding:.8rem}
 .cats button[aria-pressed=true]{border-color:var(--go);background:color-mix(in srgb,var(--go) 14%,transparent);font-weight:700}
-select,textarea{width:100%}
+input,textarea{width:100%}
 textarea{min-height:6rem;resize:vertical}
+.hint{color:var(--mute);font-size:.85rem;font-weight:400;margin:.25rem 0 0}
 #cnt{color:var(--mute);font-size:.85rem;text-align:right}
 #go{width:100%;margin-top:1.2rem;padding:1rem;font:700 1.1rem Georgia,serif;background:var(--go);color:#fff;border:0;border-radius:.5rem}
 #go:disabled{opacity:.6}
@@ -28,13 +29,13 @@ textarea{min-height:6rem;resize:vertical}
 <body>
 <main>
 <h1>Send a help request</h1>
-<p class="s">No app needed. Your message goes by radio to responders, even without cell service.</p>
+<p class="s">No app needed. Responders already know you are near this help point. Room number is optional.</p>
 <label>What is the situation?</label>
 <div class="cats" id="cats">
 {% for k,v in cats.items() %}<button type="button" data-c="{{k}}" aria-pressed="{{ 'true' if k=='MED' else 'false' }}">{{v}}</button>{% endfor %}
 </div>
-<label for="zone">Where are you?</label>
-<select id="zone">{% for z in zones %}<option{% if z=='F14' %} selected{% endif %}>{{z}}</option>{% endfor %}</select>
+<label for="room">Room <span class="hint">(optional)</span></label>
+<input id="room" maxlength="5" placeholder="e.g. F14 — leave blank if unsure" autocomplete="off">
 <label for="text">Details</label>
 <textarea id="text" maxlength="60" placeholder="Example: need fridge for insulin"></textarea>
 <div id="cnt">0 / 60</div>
@@ -60,7 +61,7 @@ $("go").onclick=async()=>{
     const r=await fetch("/send",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({floor:"3",room:$("zone").value,category:cat,text:$("text").value})
+      body:JSON.stringify({room:$("room").value.trim(),category:cat,text:$("text").value})
     });
     const j=await r.json();
     if(j.ok){

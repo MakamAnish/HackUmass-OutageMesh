@@ -13,8 +13,18 @@ header{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;justify-content
 h1{font-size:1.3rem;margin:0}
 #stats{color:var(--mute)}
 .tools button{font:inherit;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:.4rem;padding:.4rem .8rem;margin-left:.4rem;cursor:pointer}
-main{max-width:56rem;margin:0 auto;padding:1rem 1.5rem}
-.m{display:grid;grid-template-columns:5.5rem 1fr auto;gap:1rem;align-items:center;background:var(--card);border:1px solid var(--line);border-left:8px solid var(--c);border-radius:.4rem;padding:.8rem 1rem;margin-bottom:.6rem}
+.layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:1rem;max-width:72rem;margin:0 auto;padding:1rem 1.5rem}
+@media(max-width:900px){.layout{grid-template-columns:1fr}}
+.map-panel{background:var(--card);border:1px solid var(--line);border-radius:.4rem;padding:.75rem}
+.map-panel h2{font-size:1rem;margin:0 0 .5rem}
+#mapLabel{color:var(--mute);font-size:.85rem;margin:0 0 .5rem;min-height:1.2em}
+.map-wrap{position:relative;width:100%;background:#ddd;border:1px solid var(--line);overflow:hidden;aspect-ratio:16/10}
+.map-wrap img{display:block;width:100%;height:100%;object-fit:contain;background:#e8e4dc}
+.pin{position:absolute;transform:translate(-50%,-100%);width:1.6rem;height:1.6rem;border-radius:50% 50% 50% 0;rotate:-45deg;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);cursor:pointer;z-index:2}
+.pin.active{outline:3px solid var(--ink);outline-offset:2px;z-index:3}
+.pin .n{position:absolute;inset:0;display:grid;place-items:center;rotate:45deg;color:#fff;font:700 .7rem system-ui;pointer-events:none}
+.m{display:grid;grid-template-columns:5.5rem 1fr auto;gap:1rem;align-items:center;background:var(--card);border:1px solid var(--line);border-left:8px solid var(--c);border-radius:.4rem;padding:.8rem 1rem;margin-bottom:.6rem;cursor:pointer}
+.m.selected{box-shadow:inset 0 0 0 2px var(--ink)}
 .m.resolved{opacity:.45}
 .u{font-weight:800;font-size:1rem;color:var(--c);text-align:center;letter-spacing:.02em}
 .t{font-size:1.1rem;font-weight:600}
@@ -37,11 +47,70 @@ main{max-width:56rem;margin:0 auto;padding:1rem 1.5rem}
     <button id="clr" type="button">Clear all</button>
   </div>
 </header>
-<main id="list"><div class="empty">No messages yet. Waiting for the radio.</div></main>
+<div class="layout">
+  <section class="map-panel">
+    <h2>Help-point map</h2>
+    <p id="mapLabel">Location = nearest Wio / help point (not phone GPS).</p>
+    <div class="map-wrap" id="map">
+      <img id="mapImg" alt="Floor plan" src="">
+    </div>
+  </section>
+  <section id="list"><div class="empty">No messages yet. Waiting for the radio.</div></section>
+</div>
 <script>
 const COL={HIGH:"var(--high)",MEDIUM:"var(--med)",LOW:"var(--low)"};
-let seen=new Set(), first=true;
+const COL_HEX={HIGH:"#b3261e",MEDIUM:"#d9622b",LOW:"#2f7d5b"};
+let seen=new Set(), first=true, selected=null, helpPoints=null, rowsCache=[];
+
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e}
+
+function nodeFromMsg(r){
+  const letter=(String(r.id||"").match(/^[A-Z]/i)||[])[0];
+  if(letter && helpPoints?.nodes?.[letter.toUpperCase()]) return helpPoints.nodes[letter.toUpperCase()];
+  const b=(r.building||"").toUpperCase();
+  const match=Object.values(helpPoints?.nodes||{}).find(n=>n.building===b);
+  return match||null;
+}
+
+function showMapFor(r){
+  const node=nodeFromMsg(r);
+  const mapKey=node?.map;
+  const map=mapKey && helpPoints.maps?.[mapKey];
+  const img=document.getElementById("mapImg");
+  const label=document.getElementById("mapLabel");
+  if(!map){
+    label.textContent="No floor map configured for this help point yet.";
+    img.removeAttribute("src");
+    return;
+  }
+  img.src="/static/floorplans/"+map.image;
+  label.textContent=map.label+(node?.label?" · "+node.label:"");
+}
+
+function renderPins(rows){
+  const map=document.getElementById("map");
+  map.querySelectorAll(".pin").forEach(p=>p.remove());
+  const open=rows.filter(r=>r.status!=="resolved");
+  const byNode={};
+  open.forEach(r=>{
+    const node=nodeFromMsg(r);
+    if(!node)return;
+    const key=node.map+"|"+node.x+"|"+node.y;
+    (byNode[key]=byNode[key]||{node,msgs:[]}).msgs.push(r);
+  });
+  Object.values(byNode).forEach(({node,msgs})=>{
+    const top=msgs.sort((a,b)=>({HIGH:0,MEDIUM:1,LOW:2}[a.level]||3)-({HIGH:0,MEDIUM:1,LOW:2}[b.level]||3))[0];
+    const pin=el("div","pin"+(selected && msgs.some(m=>m.id===selected)?" active":""));
+    pin.style.left=node.x+"%";
+    pin.style.top=node.y+"%";
+    pin.style.background=COL_HEX[top.level]||COL_HEX.LOW;
+    pin.title=node.label+" · "+msgs.length+" open";
+    pin.append(el("span","n",msgs.length>1?String(msgs.length):""));
+    pin.onclick=e=>{e.stopPropagation();selected=top.id;showMapFor(top);renderList(rowsCache);renderPins(rowsCache);};
+    map.append(pin);
+  });
+}
+
 async function setStatus(id,status){
   await fetch("/api/messages/"+encodeURIComponent(id)+"/status",{
     method:"POST",
@@ -50,28 +119,32 @@ async function setStatus(id,status){
   });
   await load();
 }
-async function load(){
-  const rows=await (await fetch("/api/messages")).json();
+
+function renderList(rows){
   const list=document.getElementById("list");
   list.replaceChildren();
   const open=rows.filter(r=>r.status!=="resolved").length;
   document.getElementById("stats").textContent=rows.length+" messages, "+open+" open";
   if(!rows.length){
     list.append(el("div","empty","No messages yet. Waiting for the radio."));
-    first=false;
     return;
   }
   rows.forEach(r=>{
     const level=r.level||"LOW";
-    const d=el("div","m"+(r.status==="resolved"?" resolved":"")+((!first&&!seen.has(r.id))?" fresh":""));
+    const node=nodeFromMsg(r);
+    const d=el("div","m"+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
     d.style.setProperty("--c",COL[level]||COL.LOW);
+    d.onclick=()=>{selected=r.id;showMapFor(r);renderList(rowsCache);renderPins(rowsCache);};
     const u=el("div","u",level);
     const mid=el("div");
     mid.append(el("div","t",r.text||""));
     const when=r.received_at?new Date(r.received_at).toLocaleTimeString():"";
+    const where=node?node.label:(r.zone||"unknown help point");
+    const room=r.room?(" · room "+r.room):"";
     const reasons=r.kw_reasons?(" · "+r.kw_reasons):"";
-    mid.append(el("div","meta",(r.zone||"")+" · "+(r.category||"")+" · "+when+(r.rssi!=null?" · "+r.rssi+" dBm":"")+" · "+(r.status||"new")+reasons));
+    mid.append(el("div","meta",where+room+" · "+(r.category||"")+" · "+when+(r.rssi!=null?" · "+r.rssi+" dBm":"")+" · "+(r.status||"new")+reasons));
     const a=el("div","act");
+    a.onclick=e=>e.stopPropagation();
     if(r.status!=="ack"){
       const b=el("button","","Acknowledge");
       b.onclick=()=>setStatus(r.id,"ack");
@@ -86,10 +159,24 @@ async function load(){
     list.append(d);
     seen.add(r.id);
   });
+}
+
+async function load(){
+  if(!helpPoints){
+    helpPoints=await (await fetch("/api/map")).json();
+  }
+  const rows=await (await fetch("/api/messages")).json();
+  rowsCache=rows;
+  if(!selected && rows.length) selected=rows[0].id;
+  const sel=rows.find(r=>r.id===selected)||rows[0];
+  if(sel) showMapFor(sel);
+  renderList(rows);
+  renderPins(rows);
   first=false;
 }
+
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load();};
-document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;await load();}};
+document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;await load();}};
 load();
 setInterval(load,2000);
 </script>
