@@ -20,8 +20,10 @@ input,textarea{width:100%}
 textarea{min-height:6rem;resize:vertical}
 .hint{color:var(--mute);font-size:.85rem;font-weight:400}
 #cnt{color:var(--mute);font-size:.85rem;text-align:right}
-#go{width:100%;margin-top:1.2rem;padding:1rem;font:700 1.1rem Georgia,serif;background:var(--go);color:#fff;border:0;border-radius:.5rem}
-#go:disabled{opacity:.6}
+#go,#sos{width:100%;padding:1rem;font:700 1.1rem Georgia,serif;border:0;border-radius:.5rem}
+#sos{background:#b3261e;color:#fff;margin:0 0 1rem}
+#go{background:var(--go);color:#fff;margin-top:1.2rem}
+#go:disabled,#sos:disabled{opacity:.6}
 :focus-visible{outline:3px solid var(--go);outline-offset:2px}
 #msg{margin-top:1rem;font-weight:600;min-height:1.5rem}
 nav{margin-bottom:1rem}
@@ -33,6 +35,8 @@ nav a{color:var(--go)}
 <nav><a href="/requests">My requests</a></nav>
 <h1>Send a help request</h1>
 <p class="s">No app needed. After you send, you will see status updates if responders acknowledge.</p>
+<button id="sos" type="button">SOS</button>
+<p class="s">SOS is always high priority and alerts responders with sound and voice.</p>
 <label>What is the situation?</label>
 <div class="cats" id="cats">
 {% for k,v in cats.items() %}<button type="button" data-c="{{k}}" aria-pressed="{{ 'true' if k=='MED' else 'false' }}">{{v}}</button>{% endfor %}
@@ -42,7 +46,7 @@ nav a{color:var(--go)}
 <label for="text">Details</label>
 <textarea id="text" maxlength="60" placeholder="Example: need fridge for insulin"></textarea>
 <div id="cnt">0 / 60</div>
-<button id="go">Send request</button>
+<button id="go" type="button">Send request</button>
 <div id="msg" role="status"></div>
 </main>
 <script>
@@ -68,19 +72,21 @@ $("cats").onclick=e=>{
   [...$("cats").children].forEach(x=>x.setAttribute("aria-pressed",x===b?"true":"false"));
 };
 $("text").oninput=()=>$("cnt").textContent=$("text").value.length+" / 60";
-$("go").onclick=async()=>{
+async function submit(sos){
   const m=$("msg");
   $("go").disabled=true;
+  $("sos").disabled=true;
   m.style.color="";
-  m.textContent="Sending...";
+  m.textContent=sos?"Sending SOS...":"Sending...";
   try{
     const r=await fetch("/send",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         room:$("room").value.trim(),
-        category:cat,
-        text:$("text").value,
+        category:sos?"SOS":cat,
+        sos:sos,
+        text:sos?($("text").value||"SOS"):$("text").value,
         client_id:clientId()
       })
     });
@@ -100,7 +106,10 @@ $("go").onclick=async()=>{
     m.textContent="Could not reach the relay. Is sender_app running? On phone use this laptop's hotspot IP, not campus Wi-Fi.";
   }
   $("go").disabled=false;
-};
+  $("sos").disabled=false;
+}
+$("go").onclick=()=>submit(false);
+$("sos").onclick=()=>submit(true);
 </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 import re
 
-CATEGORIES = ("MED", "TRAP", "WATER", "SAFE", "OTHER")
+CATEGORIES = ("MED", "TRAP", "WATER", "SAFE", "OTHER", "SOS")
 
 HIGH_WORDS = {
     "insulin",
@@ -44,6 +44,9 @@ def keyword_score(category: str, text: str) -> dict:
     cleaned = _normalize(text)
     reasons = []
     score = 0
+
+    if category == "SOS":
+        return {"level": "HIGH", "score": 100, "reasons": ["sos"]}
 
     if category in {"MED", "TRAP"}:
         reasons.append(f"cat:{category}")

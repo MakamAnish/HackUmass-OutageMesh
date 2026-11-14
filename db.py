@@ -27,10 +27,14 @@ def init(db_path: str = DB_PATH) -> str:
           snr REAL,
           received_at TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'new',
-          synced INTEGER NOT NULL DEFAULT 0
+          synced INTEGER NOT NULL DEFAULT 0,
+          sos INTEGER NOT NULL DEFAULT 0
         )
         """
     )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "sos" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN sos INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
     return db_path
@@ -66,6 +70,7 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
         "received_at": row.get("received_at") or datetime.now(timezone.utc).isoformat(),
         "status": row.get("status") or "new",
         "synced": int(row.get("synced") or 0),
+        "sos": 1 if row.get("sos") or row.get("category") == "SOS" else 0,
     }
     if not prepared["id"]:
         return None
@@ -75,8 +80,9 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
             """
             INSERT OR IGNORE INTO messages (
               id, zone, building, floor, room, category, text, level, kw_score,
-              kw_reasons, ai_level, ai_reason, rssi, snr, received_at, status, synced
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              kw_reasons, ai_level, ai_reason, rssi, snr, received_at, status, synced,
+              sos
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 prepared["id"],
@@ -96,6 +102,7 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
                 prepared["received_at"],
                 prepared["status"],
                 prepared["synced"],
+                prepared["sos"],
             ),
         )
         conn.commit()
@@ -119,6 +126,7 @@ def list_messages(since: str | None = None, db_path: str = DB_PATH):
         query += """
           ORDER BY
             CASE status WHEN 'resolved' THEN 1 ELSE 0 END,
+            CASE WHEN sos = 1 OR category = 'SOS' THEN 0 ELSE 1 END,
             CASE level WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 WHEN 'LOW' THEN 2 ELSE 3 END,
             received_at DESC
         """

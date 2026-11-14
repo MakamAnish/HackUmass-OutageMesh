@@ -64,6 +64,11 @@ def send():
     category = str(payload.get("category") or "OTHER").upper()
     text = sanitize(payload.get("text") or "")
     client_id = sanitize(payload.get("client_id") or "")[:40]
+    sos = bool(payload.get("sos")) or category == "SOS"
+    if sos:
+        category = "SOS"
+        if not text:
+            text = "SOS"
 
     if not text:
         return jsonify({"ok": False, "error": "Type a short message first."}), 400

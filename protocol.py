@@ -6,7 +6,7 @@ import re
 import threading
 from pathlib import Path
 
-CATEGORIES = ("MED", "TRAP", "WATER", "SAFE", "OTHER")
+CATEGORIES = ("MED", "TRAP", "WATER", "SAFE", "OTHER", "SOS")
 MAX_TEXT = 60
 MAX_ACK_TEXT = 40
 MAX_PAYLOAD = 100
@@ -67,6 +67,7 @@ def decode(payload: str) -> dict:
         "room": None if room == NO_ROOM else room,
         "category": category,
         "text": sanitize(text),
+        "sos": category == "SOS",
     }
 
 

@@ -35,6 +35,7 @@ def ingest(payload: str, rssi: int | None = None, snr: float | None = None) -> d
             "received_at": datetime.now(timezone.utc).isoformat(),
             "status": "new",
             "synced": 0,
+            "sos": 1 if decoded.get("sos") else 0,
         }
         return insert(row)
     except Exception as exc:  # pragma: no cover - defensive per contract

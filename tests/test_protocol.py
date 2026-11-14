@@ -82,6 +82,16 @@ def test_ack_round_trip():
     assert decode_ack("A47|DUB-3-X|MED|hi") is None
 
 
+def test_sos_round_trip():
+    payload = encode("A1", "CC-1-X", "SOS", "help me")
+    msg = decode(payload)
+    assert msg["sos"] is True
+    assert msg["category"] == "SOS"
+    assert msg["floor"] == "1"
+    assert msg["text"] == "help me"
+    assert len(payload.encode()) <= MAX_PAYLOAD
+
+
 def test_done_round_trip():
     assert encode_done("A47", "all clear") == "DONE|A47|all clear"
     assert decode_done("DONE|A47|all clear") == {"id": "A47", "text": "all clear"}
