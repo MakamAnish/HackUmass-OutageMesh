@@ -9,7 +9,7 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 import outgoing
 import radio_worker
-from protocol import CATEGORIES, decode_ack, encode, make_zone, next_id, sanitize
+from protocol import CATEGORIES, decode_ack, decode_done, encode, make_zone, next_id, sanitize
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
@@ -27,6 +27,11 @@ CATS = {"MED": "Medical", "TRAP": "Trapped", "WATER": "Water", "SAFE": "Safe", "
 
 
 def _on_packet(payload: str, rssi: int | None, snr: float | None) -> None:
+    done = decode_done(payload)
+    if done is not None:
+        outgoing.mark_resolved(done["id"], done.get("text") or None)
+        log.info("DONE for %s note=%r rssi=%s", done["id"], done.get("text"), rssi)
+        return
     ack = decode_ack(payload)
     if ack is None:
         return

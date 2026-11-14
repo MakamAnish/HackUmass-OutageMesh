@@ -11,8 +11,10 @@ from flask import Flask, jsonify, render_template, request
 
 from db import DB_PATH, init as init_db, list_messages, set_status
 from ingest import ingest
-from protocol import encode_ack
+from protocol import encode_ack, encode_done
 import radio_worker
+
+_sim_n = 0
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
@@ -61,6 +63,15 @@ def api_set_status(mid):
         except Exception as e:
             radio_ok = False
             logging.getLogger("receiver").warning("ACK radio send failed for %s: %s", mid, e)
+    elif status == "resolved":
+        try:
+            radio_ok = radio_worker.send(encode_done(mid, reply_text))
+            logging.getLogger("receiver").info(
+                "DONE sent for %s note=%r ok=%s", mid, reply_text, radio_ok
+            )
+        except Exception as e:
+            radio_ok = False
+            logging.getLogger("receiver").warning("DONE radio send failed for %s: %s", mid, e)
     return jsonify({"ok": True, "radio_ack": radio_ok})
 
 
@@ -79,9 +90,12 @@ def health():
 
 @app.post("/api/simulate")
 def simulate():
-    # No room from sender — location is help point A on the floor map.
-    ingest("A99|DUB-3-X|MED|needs fridge for insulin", rssi=-55, snr=12.0)
-    return jsonify({"ok": True})
+    # Unique id each click — duplicates were ignored by SQLite PRIMARY KEY.
+    global _sim_n
+    _sim_n += 1
+    mid = f"T{(_sim_n % 99999) or 1}"
+    row = ingest(f"{mid}|DUB-3-X|MED|needs fridge for insulin", rssi=-55, snr=12.0)
+    return jsonify({"ok": True, "id": mid, "stored": row is not None})
 
 
 @app.post("/api/clear")

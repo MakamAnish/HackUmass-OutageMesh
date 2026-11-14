@@ -66,8 +66,13 @@ const COL={HIGH:"var(--high)",MEDIUM:"var(--med)",LOW:"var(--low)"};
 const COL_HEX={HIGH:"#b3261e",MEDIUM:"#d9622b",LOW:"#2f7d5b"};
 const ORDER=["HIGH","MEDIUM","LOW"];
 let seen=new Set(), first=true, selected=null, helpPoints=null, rowsCache=[];
+const replyDrafts={};
 
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e}
+function typingReply(){
+  const a=document.activeElement;
+  return !!(a && a.id && a.id.startsWith("reply-"));
+}
 
 function nodeFromMsg(r){
   const letter=(String(r.id||"").match(/^[A-Z]/i)||[])[0];
@@ -116,13 +121,15 @@ function renderPins(rows){
   });
 }
 
-async function setStatus(id,status,replyText){
+async function setStatus(id,status){
+  const replyText=replyDrafts[id]||"";
   await fetch("/api/messages/"+encodeURIComponent(id)+"/status",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({status, reply_text: replyText||""})
+    body:JSON.stringify({status, reply_text: replyText})
   });
-  await load();
+  delete replyDrafts[id];
+  await load(true);
 }
 
 function makeCard(r){
@@ -141,15 +148,19 @@ function makeCard(r){
   mid.append(el("div","meta",r.id+" · "+where+room+" · "+(r.category||"")+" · "+when+(r.rssi!=null?" · "+r.rssi+" dBm":"")+" · "+(r.status||"new")+reasons));
   const a=el("div","act");
   a.onclick=e=>e.stopPropagation();
-  if(r.status!=="ack" && r.status!=="resolved"){
+  if(r.status!=="resolved"){
     const inp=el("input");
     inp.type="text";
     inp.maxLength=40;
     inp.placeholder="Optional reply to sender";
     inp.id="reply-"+r.id;
+    inp.value=replyDrafts[r.id]||"";
+    inp.oninput=()=>{replyDrafts[r.id]=inp.value;};
     a.append(inp);
+  }
+  if(r.status!=="ack" && r.status!=="resolved"){
     const b=el("button","","Acknowledge");
-    b.onclick=()=>setStatus(r.id,"ack",inp.value.trim());
+    b.onclick=()=>setStatus(r.id,"ack");
     a.append(b);
   }else if(r.status==="ack"){
     a.append(el("div","meta","Acknowledged"));
@@ -166,6 +177,9 @@ function makeCard(r){
 
 function renderList(rows){
   const list=document.getElementById("list");
+  const active=document.activeElement;
+  const focusId=active && active.id && active.id.startsWith("reply-") ? active.id : null;
+  const caret=focusId ? active.selectionStart : null;
   list.replaceChildren();
   const open=rows.filter(r=>r.status!=="resolved");
   const done=rows.filter(r=>r.status==="resolved");
@@ -184,9 +198,17 @@ function renderList(rows){
     list.append(el("div","sec","Resolved ("+done.length+")"));
     done.forEach(r=>list.append(makeCard(r)));
   }
+  if(focusId){
+    const inp=document.getElementById(focusId);
+    if(inp){
+      inp.focus();
+      try{inp.setSelectionRange(caret,caret);}catch(e){}
+    }
+  }
 }
 
-async function load(){
+async function load(force){
+  if(!force && typingReply()) return; // don't wipe the reply box while typing
   if(!helpPoints){
     helpPoints=await (await fetch("/api/map")).json();
   }
@@ -200,10 +222,10 @@ async function load(){
   first=false;
 }
 
-document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load();};
-document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;await load();}};
-load();
-setInterval(load,2000);
+document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
+document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;await load(true);}};
+load(true);
+setInterval(()=>load(false),2000);
 </script>
 </body>
 </html>

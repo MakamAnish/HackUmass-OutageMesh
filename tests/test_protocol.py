@@ -5,8 +5,10 @@ from protocol import (
     MAX_TEXT,
     decode,
     decode_ack,
+    decode_done,
     encode,
     encode_ack,
+    encode_done,
     make_zone,
     next_id,
     sanitize,
@@ -78,3 +80,9 @@ def test_ack_round_trip():
     assert decode_ack("ACK|A47|help en route") == {"id": "A47", "text": "help en route"}
     assert encode_ack("A47", 'help, "now"') == "ACK|A47|help now"
     assert decode_ack("A47|DUB-3-X|MED|hi") is None
+
+
+def test_done_round_trip():
+    assert encode_done("A47", "all clear") == "DONE|A47|all clear"
+    assert decode_done("DONE|A47|all clear") == {"id": "A47", "text": "all clear"}
+    assert decode_ack("DONE|A47") is None

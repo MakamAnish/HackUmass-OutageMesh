@@ -1,4 +1,4 @@
-"""Laptop A: persist help requests this node sent, plus ACK / reply status."""
+"""Laptop A: persist help requests this node sent, plus ACK / resolve status."""
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -19,10 +19,17 @@ def init(db_path: str = DB_PATH) -> str:
           text TEXT NOT NULL,
           sent_at TEXT NOT NULL,
           acked_at TEXT,
-          reply_text TEXT
+          reply_text TEXT,
+          resolved_at TEXT,
+          resolve_text TEXT
         )
         """
     )
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(outgoing)")}
+    if "resolved_at" not in cols:
+        conn.execute("ALTER TABLE outgoing ADD COLUMN resolved_at TEXT")
+    if "resolve_text" not in cols:
+        conn.execute("ALTER TABLE outgoing ADD COLUMN resolve_text TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_outgoing_client ON outgoing(client_id)")
     conn.commit()
     conn.close()
@@ -53,14 +60,16 @@ def record(
         "sent_at": datetime.now(timezone.utc).isoformat(),
         "acked_at": None,
         "reply_text": None,
+        "resolved_at": None,
+        "resolve_text": None,
     }
     conn = _connect(db_path)
     try:
         conn.execute(
             """
             INSERT OR REPLACE INTO outgoing
-              (id, client_id, zone, category, text, sent_at, acked_at, reply_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              (id, client_id, zone, category, text, sent_at, acked_at, reply_text, resolved_at, resolve_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["id"],
@@ -69,6 +78,8 @@ def record(
                 row["category"],
                 row["text"],
                 row["sent_at"],
+                None,
+                None,
                 None,
                 None,
             ),
@@ -90,6 +101,31 @@ def mark_acked(msg_id: str, reply_text: str | None = None, db_path: str = DB_PAT
             WHERE id = ?
             """,
             (datetime.now(timezone.utc).isoformat(), reply_text or None, msg_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def mark_resolved(msg_id: str, resolve_text: str | None = None, db_path: str = DB_PATH) -> bool:
+    init(db_path)
+    conn = _connect(db_path)
+    try:
+        cur = conn.execute(
+            """
+            UPDATE outgoing
+            SET resolved_at = ?,
+                resolve_text = COALESCE(?, resolve_text),
+                acked_at = COALESCE(acked_at, ?)
+            WHERE id = ?
+            """,
+            (
+                datetime.now(timezone.utc).isoformat(),
+                resolve_text or None,
+                datetime.now(timezone.utc).isoformat(),
+                msg_id,
+            ),
         )
         conn.commit()
         return cur.rowcount > 0

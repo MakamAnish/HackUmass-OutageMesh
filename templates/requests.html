@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>My help requests</title>
 <style>
-:root{--bg:#f6f5f1;--ink:#1b1f23;--mute:#5d646b;--line:#cfd2d4;--go:#0b5cab;--ok:#1a7f4b;--wait:#9a6b00;--card:#fff}
-@media(prefers-color-scheme:dark){:root{--bg:#14171a;--ink:#eef0f1;--mute:#9aa2a8;--line:#343a40;--go:#5aa2ee;--ok:#4cc88a;--wait:#e0b44c;--card:#1b1e21}}
+:root{--bg:#f6f5f1;--ink:#1b1f23;--mute:#5d646b;--line:#cfd2d4;--go:#0b5cab;--ok:#1a7f4b;--wait:#9a6b00;--done:#0b5cab;--card:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#14171a;--ink:#eef0f1;--mute:#9aa2a8;--line:#343a40;--go:#5aa2ee;--ok:#4cc88a;--wait:#e0b44c;--done:#5aa2ee;--card:#1b1e21}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.45 Georgia,serif}
 main{max-width:34rem;margin:0 auto;padding:1.25rem}
@@ -16,11 +16,13 @@ nav a{color:var(--go);margin-right:1rem}
 .card{background:var(--card);border:1px solid var(--line);border-left:6px solid var(--line);border-radius:.45rem;padding:.9rem 1rem;margin:.7rem 0}
 .card.wait{border-left-color:var(--wait)}
 .card.ok{border-left-color:var(--ok)}
+.card.done{border-left-color:var(--done)}
 .card.focus{outline:2px solid var(--go);outline-offset:2px}
 .id{font-weight:700}
 .status{font-weight:700;margin:.35rem 0}
 .status.wait{color:var(--wait)}
 .status.ok{color:var(--ok)}
+.status.done{color:var(--done)}
 .reply{margin-top:.5rem;padding:.6rem .75rem;background:color-mix(in srgb,var(--ok) 12%,transparent);border-radius:.35rem}
 .meta{color:var(--mute);font-size:.85rem}
 .empty{color:var(--mute);padding:1.5rem 0}
@@ -30,7 +32,7 @@ nav a{color:var(--go);margin-right:1rem}
 <main>
 <nav><a href="/">New request</a><a href="/requests">Refresh</a></nav>
 <h1>My requests</h1>
-<p class="s">Status updates arrive over radio when responders acknowledge. This page keeps working after a refresh.</p>
+<p class="s">Status updates arrive over radio when responders acknowledge or resolve. This page keeps working after a refresh.</p>
 <div id="list"><div class="empty">Loading…</div></div>
 </main>
 <script>
@@ -59,17 +61,21 @@ async function load(){
     return;
   }
   rows.forEach(r=>{
+    const resolved=!!r.resolved_at;
     const acked=!!r.acked_at;
-    const card=el("div","card "+(acked?"ok":"wait")+(r.id===focus?" focus":""));
+    const state=resolved?"done":(acked?"ok":"wait");
+    const card=el("div","card "+state+(r.id===focus?" focus":""));
     card.append(el("div","id",r.id+(r.category?" · "+r.category:"")));
     card.append(el("div","",r.text||""));
-    const st=el("div","status "+(acked?"ok":"wait"), acked?"Responders acknowledged":"Waiting for responders…");
-    card.append(st);
-    if(acked && r.reply_text){
-      card.append(el("div","reply","Responder: "+r.reply_text));
-    }
+    const label=resolved?"Responders marked this resolved":(acked?"Responders acknowledged":"Waiting for responders…");
+    card.append(el("div","status "+state,label));
+    if(r.reply_text) card.append(el("div","reply","Responder: "+r.reply_text));
+    if(r.resolve_text) card.append(el("div","reply","Resolved note: "+r.resolve_text));
     const when=r.sent_at?new Date(r.sent_at).toLocaleString():"";
-    card.append(el("div","meta",(r.zone||"")+(when?" · sent "+when:"")+(r.acked_at?" · ack "+new Date(r.acked_at).toLocaleTimeString():"")));
+    let meta=(r.zone||"")+(when?" · sent "+when:"");
+    if(r.acked_at) meta+=" · ack "+new Date(r.acked_at).toLocaleTimeString();
+    if(r.resolved_at) meta+=" · resolved "+new Date(r.resolved_at).toLocaleTimeString();
+    card.append(el("div","meta",meta));
     list.append(card);
   });
 }

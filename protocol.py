@@ -78,25 +78,43 @@ def next_id(node_id: str, path: str | Path = "counter.txt") -> str:
     return f"{node_id.upper()}{n}"
 
 
-def encode_ack(msg_id: str, reply_text: str = "") -> str:
-    """Responder -> help point: ACK|A47 or ACK|A47|optional reply."""
+def _encode_status(kind: str, msg_id: str, reply_text: str = "") -> str:
     msg_id = str(msg_id or "").strip().upper()
     if not _ID_RE.match(msg_id):
         raise ValueError(f"bad id: {msg_id!r}")
     note = sanitize(reply_text)[:MAX_ACK_TEXT]
-    payload = f"ACK|{msg_id}|{note}" if note else f"ACK|{msg_id}"
+    payload = f"{kind}|{msg_id}|{note}" if note else f"{kind}|{msg_id}"
     if len(payload.encode()) > MAX_PAYLOAD:
-        raise ValueError(f"ack too long: {len(payload)} bytes")
+        raise ValueError(f"{kind.lower()} too long: {len(payload)} bytes")
     return payload
 
 
-def decode_ack(payload: str) -> dict | None:
-    """Return {id, text} if payload is an ACK, else None."""
+def _decode_status(payload: str, kind: str) -> dict | None:
     parts = (payload or "").strip().split("|")
-    if len(parts) < 2 or parts[0].upper() != "ACK":
+    if len(parts) < 2 or parts[0].upper() != kind:
         return None
     msg_id = parts[1].strip().upper()
     if not _ID_RE.match(msg_id):
         return None
     text = sanitize("|".join(parts[2:])) if len(parts) > 2 else ""
     return {"id": msg_id, "text": text[:MAX_ACK_TEXT]}
+
+
+def encode_ack(msg_id: str, reply_text: str = "") -> str:
+    """Responder -> help point: ACK|A47 or ACK|A47|optional reply."""
+    return _encode_status("ACK", msg_id, reply_text)
+
+
+def decode_ack(payload: str) -> dict | None:
+    """Return {id, text} if payload is an ACK, else None."""
+    return _decode_status(payload, "ACK")
+
+
+def encode_done(msg_id: str, reply_text: str = "") -> str:
+    """Responder -> help point: DONE|A47 or DONE|A47|optional note."""
+    return _encode_status("DONE", msg_id, reply_text)
+
+
+def decode_done(payload: str) -> dict | None:
+    """Return {id, text} if payload is a DONE (resolved), else None."""
+    return _decode_status(payload, "DONE")
