@@ -1,0 +1,46 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Campus help request</title>
+<style>
+:root{--bg:#f6f5f1;--ink:#1b1f23;--mute:#5d646b;--line:#cfd2d4;--go:#0b5cab;--ok:#1a7f4b;--bad:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#14171a;--ink:#eef0f1;--mute:#9aa2a8;--line:#343a40;--go:#5aa2ee;--ok:#4cc88a;--bad:#ff8a80}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.45 system-ui,sans-serif}
+main{max-width:30rem;margin:0 auto;padding:1.25rem}
+h1{font-size:1.6rem;margin:.2rem 0 .3rem}p.s{color:var(--mute);margin:0 0 1.2rem}
+label{display:block;font-weight:600;margin:1.1rem 0 .4rem}
+.cats{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
+.cats button,select,textarea{font:inherit;color:var(--ink);background:transparent;border:2px solid var(--line);border-radius:.5rem;padding:.8rem}
+.cats button[aria-pressed=true]{border-color:var(--go);background:color-mix(in srgb,var(--go) 14%,transparent);font-weight:700}
+select,textarea{width:100%}textarea{min-height:6rem;resize:vertical}
+#cnt{color:var(--mute);font-size:.85rem;text-align:right}
+#go{width:100%;margin-top:1.2rem;padding:1rem;font:700 1.1rem system-ui;background:var(--go);color:#fff;border:0;border-radius:.5rem}
+#go:disabled{opacity:.6}:focus-visible{outline:3px solid var(--go);outline-offset:2px}
+#msg{margin-top:1rem;font-weight:600;min-height:1.5rem}
+</style></head><body><main>
+<h1>Send a help request</h1>
+<p class="s">No app needed. Your message goes by radio to responders, even without cell service.</p>
+<label>What is the situation?</label>
+<div class="cats" id="cats">
+{% for k,v in cats.items() %}<button type="button" data-c="{{k}}" aria-pressed="{{ 'true' if k=='MED' else 'false' }}">{{v}}</button>{% endfor %}
+</div>
+<label for="zone">Where are you?</label>
+<select id="zone">{% for z in zones %}<option>{{z}}</option>{% endfor %}</select>
+<label for="text">Details</label>
+<textarea id="text" maxlength="50" placeholder="Example: need fridge for insulin"></textarea>
+<div id="cnt">0 / 50</div>
+<button id="go">Send request</button>
+<div id="msg" role="status"></div>
+</main><script>
+let cat="MED";const $=id=>document.getElementById(id);
+$("cats").onclick=e=>{const b=e.target.closest("button");if(!b)return;cat=b.dataset.c;
+ [...$("cats").children].forEach(x=>x.setAttribute("aria-pressed",x===b))};
+$("text").oninput=()=>$("cnt").textContent=$("text").value.length+" / 50";
+$("go").onclick=async()=>{const m=$("msg");$("go").disabled=true;m.style.color="";m.textContent="Sending...";
+ try{const r=await fetch("/send",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({zone:$("zone").value,category:cat,text:$("text").value})});
+  const j=await r.json();
+  if(j.ok){m.style.color="var(--ok)";m.textContent="Sent. Responders have been notified.";$("text").value="";$("cnt").textContent="0 / 50"}
+  else{m.style.color="var(--bad)";m.textContent=j.error}}
+ catch(e){m.style.color="var(--bad)";m.textContent="Could not reach the relay. Check your Wi-Fi connection."}
+ $("go").disabled=false};
+</script></body></html>
