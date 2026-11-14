@@ -12,14 +12,16 @@ body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 Georgia,serif}
 header{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;justify-content:space-between;padding:1rem 1.5rem;border-bottom:1px solid var(--line)}
 h1{font-size:1.3rem;margin:0}
 #stats{color:var(--mute)}
-.tools button{font:inherit;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:.4rem;padding:.4rem .8rem;margin-left:.4rem;cursor:pointer}
+.tools button,.floors button{font:inherit;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:.4rem;padding:.4rem .8rem;margin-left:.35rem;cursor:pointer}
+.floors{margin:.5rem 0}
+.floors button.active{border-color:var(--ink);font-weight:700}
 .layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:1rem;max-width:72rem;margin:0 auto;padding:1rem 1.5rem}
 @media(max-width:900px){.layout{grid-template-columns:1fr}}
 .map-panel{background:var(--card);border:1px solid var(--line);border-radius:.4rem;padding:.75rem}
 .map-panel h2{font-size:1rem;margin:0 0 .5rem}
 #mapLabel{color:var(--mute);font-size:.85rem;margin:0 0 .5rem;min-height:1.2em}
-.map-wrap{position:relative;width:100%;background:#ddd;border:1px solid var(--line);overflow:hidden;aspect-ratio:16/10}
-.map-wrap img{display:block;width:100%;height:100%;object-fit:contain;background:#e8e4dc}
+.map-wrap{position:relative;width:100%;background:#ddd;border:1px solid var(--line);overflow:hidden;aspect-ratio:1/1}
+.map-wrap img{display:block;width:100%;height:100%;object-fit:contain;background:#fff}
 .pin{position:absolute;transform:translate(-50%,-100%);width:1.6rem;height:1.6rem;border-radius:50% 50% 50% 0;rotate:-45deg;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);cursor:pointer;z-index:2}
 .pin.active{outline:3px solid var(--ink);outline-offset:2px;z-index:3}
 .pin .n{position:absolute;inset:0;display:grid;place-items:center;rotate:45deg;color:#fff;font:700 .7rem system-ui;pointer-events:none}
@@ -53,8 +55,9 @@ h1{font-size:1.3rem;margin:0}
 </header>
 <div class="layout">
   <section class="map-panel">
-    <h2>Help-point map</h2>
-    <p id="mapLabel">Location = nearest Wio / help point (not phone GPS).</p>
+    <h2>Location map</h2>
+    <div class="floors" id="floors"></div>
+    <p id="mapLabel">Pin = help point (Wio), or the room the sender typed if provided.</p>
     <div class="map-wrap" id="map">
       <img id="mapImg" alt="Floor plan" src="">
     </div>
@@ -67,6 +70,7 @@ const COL_HEX={HIGH:"#b3261e",MEDIUM:"#d9622b",LOW:"#2f7d5b"};
 const ORDER=["HIGH","MEDIUM","LOW"];
 let seen=new Set(), first=true, selected=null, helpPoints=null, rowsCache=[];
 const replyDrafts={};
+let viewMap=null; // manual floor tab, or null = follow selected message
 
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e}
 function typingReply(){
@@ -78,46 +82,95 @@ function nodeFromMsg(r){
   const letter=(String(r.id||"").match(/^[A-Z]/i)||[])[0];
   if(letter && helpPoints?.nodes?.[letter.toUpperCase()]) return helpPoints.nodes[letter.toUpperCase()];
   const b=(r.building||"").toUpperCase();
-  const match=Object.values(helpPoints?.nodes||{}).find(n=>n.building===b);
-  return match||null;
+  return Object.values(helpPoints?.nodes||{}).find(n=>n.building===b)||null;
 }
 
-function showMapFor(r){
+/** Resolve where to put the pin for a message. */
+function locate(r){
   const node=nodeFromMsg(r);
-  const mapKey=node?.map;
-  const map=mapKey && helpPoints.maps?.[mapKey];
+  const building=(r.building||node?.building||"CC").toUpperCase();
+  const floor=String(r.floor||node?.floor||"1");
+  const room=(r.room||"").toUpperCase();
+  const mapKey=building+"-"+floor;
+  const map=helpPoints.maps?.[mapKey];
+  if(room && map?.rooms?.[room]){
+    const rm=map.rooms[room];
+    return {mapKey, map, x:rm.x, y:rm.y, label:rm.label||room, kind:"room"};
+  }
+  if(node){
+    const nmap=helpPoints.maps?.[node.map];
+    return {mapKey:node.map, map:nmap, x:node.x, y:node.y, label:node.label, kind:"help"};
+  }
+  if(map){
+    return {mapKey, map, x:50, y:50, label:building+" floor "+floor, kind:"floor"};
+  }
+  return null;
+}
+
+function renderFloorTabs(){
+  const box=document.getElementById("floors");
+  box.replaceChildren();
+  Object.keys(helpPoints.maps||{}).sort().forEach(key=>{
+    const b=el("button","",helpPoints.maps[key].label.replace("Campus Center — ","")||key);
+    if((viewMap||"")==key) b.classList.add("active");
+    b.onclick=()=>{viewMap=key; const sel=rowsCache.find(r=>r.id===selected); if(sel) showMapFor(sel); else showMapKey(key); renderPins(rowsCache); renderFloorTabs();};
+    box.append(b);
+  });
+  const auto=el("button","","Follow selected");
+  if(!viewMap) auto.classList.add("active");
+  auto.onclick=()=>{viewMap=null; const sel=rowsCache.find(r=>r.id===selected); if(sel) showMapFor(sel); renderPins(rowsCache); renderFloorTabs();};
+  box.append(auto);
+}
+
+function showMapKey(mapKey, subtitle){
+  const map=helpPoints.maps?.[mapKey];
   const img=document.getElementById("mapImg");
   const label=document.getElementById("mapLabel");
   if(!map){
-    label.textContent="No floor map configured for this help point yet.";
+    label.textContent="No floor map for "+mapKey;
     img.removeAttribute("src");
     return;
   }
   img.src="/static/floorplans/"+map.image;
-  label.textContent=map.label+(node?.label?" · "+node.label:"");
+  label.textContent=map.label+(subtitle?" · "+subtitle:"");
+}
+
+function showMapFor(r){
+  const loc=locate(r);
+  if(!loc||!loc.map){
+    document.getElementById("mapLabel").textContent="No floor map configured yet.";
+    return;
+  }
+  const mapKey=viewMap||loc.mapKey;
+  const subtitle=viewMap && viewMap!==loc.mapKey
+    ? ("viewing "+viewMap+"; pin is on "+loc.mapKey+" — "+loc.label)
+    : loc.label;
+  showMapKey(mapKey, subtitle);
 }
 
 function renderPins(rows){
-  const map=document.getElementById("map");
-  map.querySelectorAll(".pin").forEach(p=>p.remove());
+  const wrap=document.getElementById("map");
+  wrap.querySelectorAll(".pin").forEach(p=>p.remove());
   const open=rows.filter(r=>r.status!=="resolved");
-  const byNode={};
+  const activeMap=viewMap || (selected && locate(rows.find(r=>r.id===selected)||{})?.mapKey);
+  const byPos={};
   open.forEach(r=>{
-    const node=nodeFromMsg(r);
-    if(!node)return;
-    const key=node.map+"|"+node.x+"|"+node.y;
-    (byNode[key]=byNode[key]||{node,msgs:[]}).msgs.push(r);
+    const loc=locate(r);
+    if(!loc||!loc.map)return;
+    if(activeMap && loc.mapKey!==activeMap)return;
+    const key=loc.mapKey+"|"+loc.x+"|"+loc.y;
+    (byPos[key]=byPos[key]||{loc,msgs:[]}).msgs.push(r);
   });
-  Object.values(byNode).forEach(({node,msgs})=>{
+  Object.values(byPos).forEach(({loc,msgs})=>{
     const top=msgs.sort((a,b)=>(ORDER.indexOf(a.level)-ORDER.indexOf(b.level)))[0];
     const pin=el("div","pin"+(selected && msgs.some(m=>m.id===selected)?" active":""));
-    pin.style.left=node.x+"%";
-    pin.style.top=node.y+"%";
+    pin.style.left=loc.x+"%";
+    pin.style.top=loc.y+"%";
     pin.style.background=COL_HEX[top.level]||COL_HEX.LOW;
-    pin.title=node.label+" · "+msgs.length+" open";
+    pin.title=loc.label+" · "+msgs.length+" open";
     pin.append(el("span","n",msgs.length>1?String(msgs.length):""));
-    pin.onclick=e=>{e.stopPropagation();selected=top.id;showMapFor(top);renderList(rowsCache);renderPins(rowsCache);};
-    map.append(pin);
+    pin.onclick=e=>{e.stopPropagation();selected=top.id;viewMap=null;showMapFor(top);renderList(rowsCache);renderPins(rowsCache);renderFloorTabs();};
+    wrap.append(pin);
   });
 }
 
@@ -134,18 +187,17 @@ async function setStatus(id,status){
 
 function makeCard(r){
   const level=r.level||"LOW";
-  const node=nodeFromMsg(r);
+  const loc=locate(r);
   const d=el("div","m"+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
   d.style.setProperty("--c",COL[level]||COL.LOW);
-  d.onclick=()=>{selected=r.id;showMapFor(r);renderList(rowsCache);renderPins(rowsCache);};
+  d.onclick=()=>{selected=r.id;viewMap=null;showMapFor(r);renderList(rowsCache);renderPins(rowsCache);renderFloorTabs();};
   const u=el("div","u",level);
   const mid=el("div");
   mid.append(el("div","t",r.text||""));
   const when=r.received_at?new Date(r.received_at).toLocaleTimeString():"";
-  const where=node?node.label:(r.zone||"unknown help point");
-  const room=r.room?(" · room "+r.room):"";
+  const where=loc?loc.label:(r.zone||"unknown");
   const reasons=r.kw_reasons?(" · "+r.kw_reasons):"";
-  mid.append(el("div","meta",r.id+" · "+where+room+" · "+(r.category||"")+" · "+when+(r.rssi!=null?" · "+r.rssi+" dBm":"")+" · "+(r.status||"new")+reasons));
+  mid.append(el("div","meta",r.id+" · "+where+" · "+(r.category||"")+" · "+when+(r.rssi!=null?" · "+r.rssi+" dBm":"")+" · "+(r.status||"new")+reasons));
   const a=el("div","act");
   a.onclick=e=>e.stopPropagation();
   if(r.status!=="resolved"){
@@ -208,15 +260,17 @@ function renderList(rows){
 }
 
 async function load(force){
-  if(!force && typingReply()) return; // don't wipe the reply box while typing
+  if(!force && typingReply()) return;
   if(!helpPoints){
     helpPoints=await (await fetch("/api/map")).json();
+    renderFloorTabs();
   }
   const rows=await (await fetch("/api/messages")).json();
   rowsCache=rows;
   if(!selected && rows.length) selected=rows[0].id;
   const sel=rows.find(r=>r.id===selected)||rows[0];
   if(sel) showMapFor(sel);
+  else if(viewMap) showMapKey(viewMap);
   renderList(rows);
   renderPins(rows);
   first=false;

@@ -40,3 +40,6 @@ Desktop.ini
 *.log
 *.bak
 backup/
+
+# Source floor plans (HEIC) — converted PNGs live in static/floorplans/
+floor_plans/

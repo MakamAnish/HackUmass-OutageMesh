@@ -94,7 +94,7 @@ def simulate():
     global _sim_n
     _sim_n += 1
     mid = f"T{(_sim_n % 99999) or 1}"
-    row = ingest(f"{mid}|DUB-3-X|MED|needs fridge for insulin", rssi=-55, snr=12.0)
+    row = ingest(f"{mid}|CC-1-X|MED|needs fridge for insulin", rssi=-55, snr=12.0)
     return jsonify({"ok": True, "id": mid, "stored": row is not None})
 
 

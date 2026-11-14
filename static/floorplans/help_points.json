@@ -1,26 +1,64 @@
 {
   "maps": {
-    "DUB-3": {
-      "image": "DUB-3.svg",
-      "label": "Du Bois Library — Floor 3"
+    "CC-1": {
+      "image": "CC-1.png",
+      "label": "Campus Center — Floor 1",
+      "rooms": {
+        "HELP": {"x": 27, "y": 40, "label": "Help Desk"},
+        "HW": {"x": 18, "y": 12, "label": "Hardware Table"},
+        "ENT": {"x": 30, "y": 6, "label": "Campus Center Entrance"},
+        "N155": {"x": 38, "y": 14, "label": "N155 Nonbinary Sleeping"},
+        "N151": {"x": 32, "y": 32, "label": "N151 Workshops"},
+        "N111": {"x": 22, "y": 52, "label": "N111 Organizer Room"},
+        "N101": {"x": 16, "y": 86, "label": "N101 Hacking Room"},
+        "S140": {"x": 38, "y": 88, "label": "S140 Workshop"},
+        "S131": {"x": 52, "y": 68, "label": "S131 Hacking Room"},
+        "S120": {"x": 58, "y": 88, "label": "S120 Workshop/Hacking"},
+        "S110": {"x": 78, "y": 86, "label": "S110 Hacking Room"}
+      }
+    },
+    "CC-2": {
+      "image": "CC-2.png",
+      "label": "Campus Center — Floor 2",
+      "rooms": {
+        "N255": {"x": 22, "y": 12, "label": "N255 Male Sleeping"},
+        "N251": {"x": 32, "y": 32, "label": "N251 Workshops"},
+        "N211": {"x": 24, "y": 52, "label": "N211 Mentor Room"},
+        "N201": {"x": 16, "y": 86, "label": "N201 Hacking Room"},
+        "S231": {"x": 48, "y": 58, "label": "S231 Female Sleeping"},
+        "S211": {"x": 68, "y": 58, "label": "S211 Hacking Room"},
+        "S240": {"x": 48, "y": 86, "label": "S240 Hacking/Judging"},
+        "S220": {"x": 72, "y": 86, "label": "S220 Hacking Room"}
+      }
+    },
+    "CC-3": {
+      "image": "CC-3.png",
+      "label": "Campus Center — Floor 3",
+      "rooms": {
+        "N311": {"x": 18, "y": 86, "label": "N311"},
+        "S331": {"x": 62, "y": 48, "label": "S331 Meeting/Hacking"},
+        "S311": {"x": 78, "y": 48, "label": "S311 Meeting/Hacking"},
+        "S350": {"x": 42, "y": 86, "label": "S350"},
+        "SHOWER": {"x": 40, "y": 55, "label": "Single Stall Shower"}
+      }
     }
   },
   "nodes": {
     "A": {
-      "building": "DUB",
-      "floor": "3",
-      "map": "DUB-3",
-      "x": 48,
-      "y": 62,
-      "label": "Help point A (Wio) — lobby"
+      "building": "CC",
+      "floor": "1",
+      "map": "CC-1",
+      "x": 27,
+      "y": 40,
+      "label": "Help point A — Help Desk (Floor 1)"
     },
     "B": {
-      "building": "DUB",
-      "floor": "3",
-      "map": "DUB-3",
-      "x": 72,
-      "y": 28,
-      "label": "Help point B (Wio) — east wing"
+      "building": "CC",
+      "floor": "2",
+      "map": "CC-2",
+      "x": 32,
+      "y": 32,
+      "label": "Help point B — Floor 2 workshops"
     }
   }
 }

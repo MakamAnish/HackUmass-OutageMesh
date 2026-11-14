@@ -1,0 +1,9 @@
+{
+  "building": "CC",
+  "name": "Campus Center",
+  "floors": {
+    "1": {"image": "CC-1.png"},
+    "2": {"image": "CC-2.png"},
+    "3": {"image": "CC-3.png"}
+  }
+}

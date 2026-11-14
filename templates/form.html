@@ -37,8 +37,8 @@ nav a{color:var(--go)}
 <div class="cats" id="cats">
 {% for k,v in cats.items() %}<button type="button" data-c="{{k}}" aria-pressed="{{ 'true' if k=='MED' else 'false' }}">{{v}}</button>{% endfor %}
 </div>
-<label for="room">Room <span class="hint">(optional)</span></label>
-<input id="room" maxlength="5" placeholder="e.g. F14 — leave blank if unsure" autocomplete="off">
+<label for="room">Room <span class="hint">(optional — e.g. N151, S110)</span></label>
+<input id="room" maxlength="5" placeholder="Leave blank = Help Desk / this floor" autocomplete="off">
 <label for="text">Details</label>
 <textarea id="text" maxlength="60" placeholder="Example: need fridge for insulin"></textarea>
 <div id="cnt">0 / 60</div>
