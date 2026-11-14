@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 
-from radio import BaseRadio, WioE5, get_radio
+from radio import BaseRadio, get_radio
 
 log = logging.getLogger("radio_worker")
 _radio: BaseRadio | None = None
@@ -18,16 +18,30 @@ def get() -> BaseRadio:
         return _radio
 
 
+def reset() -> None:
+    """Drop the cached radio so the next get()/send() reopens the port."""
+    global _radio
+    with _lock:
+        if _radio is not None:
+            try:
+                _radio.close()
+            except Exception:
+                pass
+            _radio = None
+
+
 def send(payload: str) -> bool:
-    """Transmit, then re-arm RX so the listen loop keeps working."""
-    r = get()
-    ok = r.send(payload)
-    if isinstance(r, WioE5):
+    """Transmit (WioE5.send re-arms RX under the same lock)."""
+    try:
+        return get().send(payload)
+    except Exception as e:
+        log.warning("send error: %s; resetting radio", e)
+        reset()
         try:
-            r.arm_rx()
-        except Exception as e:
-            log.warning("re-arm RX after send failed: %s", e)
-    return ok
+            return get().send(payload)
+        except Exception as e2:
+            log.warning("send retry failed: %s", e2)
+            return False
 
 
 def _run(on_packet) -> None:
@@ -37,8 +51,7 @@ def _run(on_packet) -> None:
             get().listen(on_packet)
         except Exception as e:
             log.warning("radio worker error: %s; retrying in 2s", e)
-            with _lock:
-                _radio = None
+            reset()
             time.sleep(2)
 
 

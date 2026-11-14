@@ -74,10 +74,17 @@ def send():
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
         log.exception("send failed")
-        return jsonify({"ok": False, "error": f"Radio error: {e}"}), 500
+        return jsonify({
+            "ok": False,
+            "error": f"Radio error: {e}. Check RADIO_PORT in .env and that the Wio is plugged in.",
+        }), 500
 
     if not ok:
-        return jsonify({"ok": False, "error": "Radio did not confirm. Try again."}), 500
+        err = radio_worker.health().get("error") or "Radio did not confirm TX DONE."
+        return jsonify({
+            "ok": False,
+            "error": f"{err} Check the board on {os.getenv('RADIO_PORT', '?')} (close Arduino Serial Monitor).",
+        }), 500
 
     outgoing.record(msg_id, zone, category, text, client_id=client_id or None)
     return jsonify(

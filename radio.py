@@ -88,9 +88,18 @@ class WioE5(BaseRadio):
         raise TimeoutError(f"{cmd}: no {expect!r} within {timeout}s (got {lines})")
 
     def send(self, payload: str) -> bool:
+        # Exclusive lock so listen thread cannot read mid-TX (garbles AT replies).
         with self.lock:
             try:
+                if not self.ser or not self.ser.is_open:
+                    self._connect()
+                self.ser.reset_input_buffer()
                 self._cmd(f'AT+TEST=TXLRPKT "{payload.encode().hex().upper()}"', "TX DONE", TX_TIMEOUT_S)
+                # Board leaves TX; re-arm RX for ACK / next packet while we still hold the lock.
+                try:
+                    self._arm_rx()
+                except Exception as e:
+                    log.warning("re-arm RX after TX failed: %s", e)
                 self.error = None
                 return True
             except (serial.SerialException, OSError, RuntimeError, TimeoutError) as e:
@@ -98,6 +107,7 @@ class WioE5(BaseRadio):
                 log.warning(self.error)
                 try:
                     self._connect()
+                    self._arm_rx()
                 except Exception as e2:
                     log.warning("reconnect failed: %s", e2)
                 return False
@@ -131,13 +141,16 @@ class WioE5(BaseRadio):
         rssi = snr = None
         last_activity = time.time()
         while True:
-            line = self._readline()
-            if not line:
-                if time.time() - last_activity > RX_IDLE_REARM_S:
-                    with self.lock:
-                        self._arm_rx()
+            # Hold the lock for every serial read so send() never interleaves.
+            with self.lock:
+                if not self.ser or not self.ser.is_open:
+                    raise serial.SerialException("port not open")
+                line = self._readline()
+                if not line and time.time() - last_activity > RX_IDLE_REARM_S:
+                    self._arm_rx()
                     log.info("%s RX re-armed after %ss idle", self.port, RX_IDLE_REARM_S)
                     last_activity = time.time()
+            if not line:
                 continue
             last_activity = time.time()
             if m := _LEN_RE.search(line):

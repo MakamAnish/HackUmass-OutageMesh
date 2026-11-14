@@ -84,7 +84,8 @@ $("go").onclick=async()=>{
         client_id:clientId()
       })
     });
-    const j=await r.json();
+    let j={};
+    try{j=await r.json();}catch(e){j={ok:false,error:"Relay returned an error (HTTP "+r.status+"). Is the radio plugged in?"};}
     if(j.ok){
       rememberId(j.id);
       m.style.color="var(--ok)";
@@ -93,10 +94,10 @@ $("go").onclick=async()=>{
       return;
     }
     m.style.color="var(--bad)";
-    m.textContent=j.error||"Send failed.";
+    m.textContent=j.error||("Send failed (HTTP "+r.status+").");
   }catch(e){
     m.style.color="var(--bad)";
-    m.textContent="Could not reach the relay. Check your Wi-Fi connection.";
+    m.textContent="Could not reach the relay. Is sender_app running? On phone use this laptop's hotspot IP, not campus Wi-Fi.";
   }
   $("go").disabled=false;
 };
