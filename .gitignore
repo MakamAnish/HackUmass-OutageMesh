@@ -1,7 +1,41 @@
+# Secrets — never commit
 .env
+*.pem
+*.key
+credentials.json
+
+# Python
 .venv/
+venv/
 __pycache__/
-*.pyc
-*.db
-counter.txt
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local runtime state
+*.db
+*.sqlite
+*.sqlite3
+counter.txt
+outage.db
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
+
+# Logs and backups
+*.log
+*.bak
+backup/
