@@ -45,7 +45,7 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
 .sec.high::before{background:var(--high)}.sec.medium::before{background:var(--med)}.sec.low::before{background:var(--low)}
 .m{position:relative;display:grid;grid-template-columns:5.2rem minmax(0,1fr) minmax(10rem,12rem);gap:1rem;align-items:start;background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--c);border-radius:.95rem;padding:1rem;margin-bottom:.7rem;box-shadow:0 4px 14px rgba(24,43,69,.045);cursor:pointer;transition:transform .15s ease,box-shadow .15s ease}
 .m.sos{padding-bottom:2.7rem}
-.sos-alarm{position:absolute;left:.85rem;bottom:.65rem;font:750 .74rem system-ui,sans-serif;padding:.4rem .7rem;border-radius:.65rem;border:1px solid color-mix(in srgb,var(--high) 42%,var(--line));background:color-mix(in srgb,var(--high) 12%,var(--surface));color:var(--high)}
+.sos-alarm{position:absolute;left:.85rem;bottom:.65rem;z-index:4;font:750 .74rem system-ui,sans-serif;padding:.4rem .7rem;border-radius:.65rem;border:1px solid color-mix(in srgb,var(--high) 42%,var(--line));background:color-mix(in srgb,var(--high) 12%,var(--surface));color:var(--high);pointer-events:auto}
 .m:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
 .m.selected{outline:2px solid color-mix(in srgb,var(--blue) 65%,transparent);outline-offset:1px}
 .m.resolved{opacity:.62}
@@ -72,7 +72,7 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
   <div class="brand">
     <span class="brand-mark" aria-hidden="true">+</span>
     <div>
-    <div class="eyebrow">OUTAGE MESH · LIVE OPERATIONS</div>
+    <div class="eyebrow">TETHER · LIVE OPERATIONS</div>
     <h1>Responder dashboard</h1>
     <div id="stats"></div>
     </div>
@@ -531,13 +531,9 @@ function makeCard(r){
   if(sos && r.status!=="resolved"){
     const alarm=el("button","sos-alarm",alarmLabel());
     alarm.type="button";
-    alarm.onclick=e=>{
-      e.stopPropagation();
-      alarmMuted=!alarmMuted;
-      refreshAlarmButtons();
-      if(alarmMuted){stopAlarm(); if(window.speechSynthesis) speechSynthesis.cancel();}
-      else syncAlarm(rowsCache);
-    };
+    alarm.setAttribute("aria-pressed", alarmMuted?"true":"false");
+    alarm.addEventListener("click", toggleAlarm, true);
+    alarm.addEventListener("pointerdown", e=>{e.stopPropagation();}, true);
     d.append(alarm);
   }
   seen.add(r.id);
@@ -576,14 +572,25 @@ function renderList(rows){
   }
 }
 
+let rowsSnap="", pointerHeld=false;
+document.addEventListener("pointerdown", ()=>{pointerHeld=true;}, true);
+document.addEventListener("pointerup", ()=>{pointerHeld=false;}, true);
+document.addEventListener("pointercancel", ()=>{pointerHeld=false;}, true);
+
 async function load(force){
-  if(!force && typingReply()) return;
+  if(!force && (typingReply() || pointerHeld)) return;
   if(!helpPoints){
     helpPoints=await (await fetch("/api/map")).json();
     renderFloorTabs();
   }
   const rows=await (await fetch("/api/messages")).json();
+  const snap=JSON.stringify(rows);
   rowsCache=rows;
+  if(!force && snap===rowsSnap){
+    syncAlarm(rows);
+    return;
+  }
+  rowsSnap=snap;
   if(!selected && rows.length) selected=rows[0].id;
   const sel=rows.find(r=>r.id===selected)||rows[0];
   if(sel) showMapFor(sel);
@@ -595,33 +602,63 @@ async function load(force){
 }
 
 let alarmMuted=false, audioCtx=null, alarmTimer=null, announced=new Set();
+function sosId(r){return String(r&&r.id||"").toUpperCase()}
 function alarmLabel(){return alarmMuted?"Alarm on":"Alarm off"}
 function refreshAlarmButtons(){
-  document.querySelectorAll(".sos-alarm").forEach(b=>b.textContent=alarmLabel());
+  document.querySelectorAll(".sos-alarm").forEach(b=>{
+    b.textContent=alarmLabel();
+    b.setAttribute("aria-pressed", alarmMuted?"true":"false");
+  });
+}
+function chokeSpeech(){
+  if(!window.speechSynthesis) return;
+  try{speechSynthesis.cancel();}catch(e){}
+  requestAnimationFrame(()=>{try{if(alarmMuted) speechSynthesis.cancel();}catch(e){}});
+  setTimeout(()=>{try{if(alarmMuted) speechSynthesis.cancel();}catch(e){}}, 50);
 }
 function stopAlarm(){
   if(alarmTimer){clearInterval(alarmTimer);alarmTimer=null;}
-  if(audioCtx){try{audioCtx.suspend();}catch(e){}}
+  chokeSpeech();
+  if(audioCtx){
+    const ctx=audioCtx;
+    audioCtx=null;
+    try{ctx.close();}catch(e){}
+  }
+}
+function toggleAlarm(e){
+  e.preventDefault();
+  e.stopPropagation();
+  alarmMuted=!alarmMuted;
+  refreshAlarmButtons();
+  if(alarmMuted) stopAlarm();
+  else syncAlarm(rowsCache);
 }
 function beep(){
   if(alarmMuted) return;
   try{
-    if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-    if(audioCtx.state==="suspended") audioCtx.resume();
-    const o=audioCtx.createOscillator();
-    const g=audioCtx.createGain();
-    o.type="square";
-    o.frequency.value=880;
-    g.gain.value=0.08;
-    o.connect(g); g.connect(audioCtx.destination);
-    o.start();
-    o.stop(audioCtx.currentTime+0.25);
+    if(!audioCtx || audioCtx.state==="closed") audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    const ctx=audioCtx;
+    const play=()=>{
+      if(alarmMuted || audioCtx!==ctx || ctx.state==="closed") return;
+      const o=ctx.createOscillator();
+      const g=ctx.createGain();
+      o.type="square";
+      o.frequency.value=880;
+      g.gain.value=0.08;
+      o.connect(g); g.connect(ctx.destination);
+      o.start();
+      o.stop(ctx.currentTime+0.25);
+    };
+    if(ctx.state==="suspended") ctx.resume().then(play).catch(()=>{});
+    else play();
   }catch(e){}
 }
 function speakSos(){
   if(alarmMuted || !window.speechSynthesis) return;
+  try{speechSynthesis.cancel();}catch(e){}
   const u=new SpeechSynthesisUtterance("SOS. Emergency help request.");
   u.rate=1;
+  u.onstart=()=>{if(alarmMuted) chokeSpeech();};
   speechSynthesis.speak(u);
 }
 function syncAlarm(rows){
@@ -630,17 +667,16 @@ function syncAlarm(rows){
   banner.hidden=!open.length;
   banner.textContent=open.length?("SOS — "+open.length+" open emergency request"+(open.length>1?"s":"")):"SOS";
   if(!open.length){stopAlarm();return;}
-  const fresh=open.filter(r=>!announced.has(r.id));
+  const fresh=open.filter(r=>!announced.has(sosId(r)));
+  fresh.forEach(r=>announced.add(sosId(r)));
   if(fresh.length){
     alarmMuted=false;
     refreshAlarmButtons();
-    fresh.forEach(r=>{
-      announced.add(r.id);
-      speakSos();
-    });
+    fresh.forEach(()=>speakSos());
   }
   if(alarmMuted){stopAlarm();return;}
   if(!alarmTimer) alarmTimer=setInterval(beep, 700);
+  beep();
 }
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
 document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();stopAlarm();await load(true);}};

@@ -90,7 +90,7 @@ def test_receiver_status_route_enqueues_ack_without_sending_in_request(monkeypat
     dashboard = receiver_app.app.test_client().get("/")
     assert b"Blackout" not in dashboard.data
     assert b"On my way" in dashboard.data
-    assert b"OUTAGE MESH" in dashboard.data
+    assert b"TETHER" in dashboard.data
     assert b"https://" not in dashboard.data
 
 
