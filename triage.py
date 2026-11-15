@@ -85,35 +85,14 @@ def keyword_score(category: str, text: str) -> dict:
 
 
 def final_level(keyword: dict, ai: dict | None) -> str:
-    """Safety floor: AI may raise the 1-5 urgency derived from keywords."""
-    keyword_priority = keyword_priority_1_to_5(keyword)
-    ai_priority = 1
-    if isinstance(ai, dict):
-        urgency = ai.get("urgency")
-        if isinstance(urgency, int) and not isinstance(urgency, bool):
-            ai_priority = max(1, min(5, urgency))
-        else:
-            ai_priority = {"LOW": 1, "MEDIUM": 3, "HIGH": 4}.get(
-                ai.get("level"), 1
-            )
-    final_priority = max(keyword_priority, ai_priority)
-    if final_priority >= 4:
-        return "HIGH"
-    if final_priority >= 3:
-        return "MEDIUM"
-    return "LOW"
-
-
-def keyword_priority_1_to_5(keyword: dict) -> int:
-    """Map the existing 0-100 keyword score onto the AI urgency scale."""
-    if isinstance(keyword, dict):
-        score = keyword.get("score")
-        if isinstance(score, int) and not isinstance(score, bool):
-            return max(1, min(5, (score + 19) // 20))
-        return {"LOW": 1, "MEDIUM": 3, "HIGH": 4}.get(
-            keyword.get("level"), 1
-        )
-    return 1
+    """Safety floor: AI may raise urgency but never lower it."""
+    levels = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}
+    keyword_level = keyword.get("level", "LOW") if isinstance(keyword, dict) else "LOW"
+    keyword_rank = levels.get(keyword_level, 1)
+    ai_rank = 1
+    if isinstance(ai, dict) and ai.get("level") in levels:
+        ai_rank = levels[ai["level"]]
+    return "HIGH" if max(keyword_rank, ai_rank) >= levels["HIGH"] else "MEDIUM" if max(keyword_rank, ai_rank) >= levels["MEDIUM"] else "LOW"
 
 
 def keyword_urgency(category, text):

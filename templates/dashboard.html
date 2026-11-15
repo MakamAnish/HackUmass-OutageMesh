@@ -33,9 +33,6 @@ h1{font-size:1.3rem;margin:0}
 .u{font-weight:800;font-size:1rem;color:var(--c);text-align:center;letter-spacing:.02em;padding-top:.2rem}
 .t{font-size:1.1rem;font-weight:600}
 .meta{color:var(--mute);font-size:.85rem}
-.ai-note{color:var(--mute);font: .85rem/1.45 system-ui,sans-serif;margin-top:.35rem}
-.ai-label{font-size:.72rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
-.ai-raised{font-weight:700;margin-left:.35rem}
 .act{display:flex;flex-direction:column;gap:.35rem;align-items:stretch;min-width:9rem}
 .act input{font:inherit;font-size:.8rem;padding:.3rem .4rem;border:1px solid var(--line);border-radius:.35rem;background:transparent;color:var(--ink);width:100%}
 .act button{font:inherit;font-size:.85rem;padding:.35rem .6rem;border:1px solid var(--line);border-radius:.4rem;background:transparent;color:var(--ink);cursor:pointer}
@@ -203,22 +200,6 @@ function makeCard(r){
   const where=loc?loc.label:(r.zone||"unknown");
   const reasons=r.kw_reasons?(" · "+r.kw_reasons):"";
   mid.append(el("div","meta",r.id+" · "+where+" · "+(r.category||"")+" · "+when+(r.rssi!=null?" · "+r.rssi+" dBm":"")+" · "+(r.status||"new")+reasons));
-  const ai=el("div","ai-note");
-  if(r.ai_status==="pending"){
-    ai.textContent="AI analyzing...";
-  }else if(r.ai_status==="done"){
-    const label=el("span","ai-label","AI suggestion");
-    const detail=el("span","", " · Urgency "+r.ai_urgency+"/5");
-    ai.append(label,detail);
-    if(r.ai_urgency>Math.max(1,Math.min(5,Math.ceil(Number(r.kw_score||20)/20)))){
-      ai.append(el("span","ai-raised","raised by AI"));
-    }
-    if(r.ai_summary) ai.append(el("div","",r.ai_summary));
-    if(r.ai_reason) ai.append(el("div","",r.ai_reason));
-  }else{
-    ai.textContent="Keyword triage (offline)";
-  }
-  mid.append(ai);
   const a=el("div","act");
   a.onclick=e=>e.stopPropagation();
   if(r.status!=="resolved"){
