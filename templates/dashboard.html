@@ -22,8 +22,11 @@ h1{font-size:1.3rem;margin:0}
 #mapLabel{color:var(--mute);font-size:.85rem;margin:0 0 .5rem;min-height:1.2em}
 .map-wrap{position:relative;width:100%;background:#ddd;border:1px solid var(--line);overflow:hidden;aspect-ratio:1/1}
 .map-wrap img{display:block;width:100%;height:100%;object-fit:contain;background:#fff}
-#radar{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
+#heat{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
 .pin{position:absolute;transform:translate(-50%,-100%);width:1.6rem;height:1.6rem;border-radius:50% 50% 50% 0;rotate:-45deg;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);cursor:pointer;z-index:2}
+.guess{position:absolute;transform:translate(-50%,-50%);width:1.45rem;height:1.45rem;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4);z-index:3;pointer-events:none;display:grid;place-items:center;color:#fff;font:700 .75rem system-ui}
+.guesses{color:var(--mute);font-size:.85rem;margin:.45rem 0 0;padding-left:1.2rem}
+.guesses li{margin:.15rem 0}
 .pin.active{outline:3px solid var(--ink);outline-offset:2px;z-index:3}
 .pin .n{position:absolute;inset:0;display:grid;place-items:center;rotate:45deg;color:#fff;font:700 .7rem system-ui;pointer-events:none}
 .sec{font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:1rem 0 .4rem;font-weight:700}
@@ -60,11 +63,12 @@ h1{font-size:1.3rem;margin:0}
   <section class="map-panel">
     <h2>Location map</h2>
     <div class="floors" id="floors"></div>
-    <p id="mapLabel">Radar = estimated distance from the help-point Wio. Walls clip the sweep.</p>
+    <p id="mapLabel">Heat map = likely phone location from Wi‑Fi range, walls, and obstacles. Numbered spots are the top 3 guesses.</p>
     <div class="map-wrap" id="map">
       <img id="mapImg" alt="Floor plan" src="">
-      <canvas id="radar"></canvas>
+      <canvas id="heat"></canvas>
     </div>
+    <ol id="guessList" class="guesses"></ol>
   </section>
   <section id="list"><div class="empty">No messages yet. Waiting for the radio.</div></section>
 </div>
@@ -173,15 +177,14 @@ function renderPins(rows){
     pin.onclick=e=>{e.stopPropagation();selected=top.id;viewMap=null;showMapFor(top);renderList(rowsCache);renderPins(rowsCache);renderFloorTabs();};
     wrap.append(pin);
   });
-  updateRadar(open, activeMap);
+  const focus=open.find(r=>r.id===selected)||open[0];
+  drawHeat(focus && locate(focus)?.mapKey===activeMap ? focus : null, activeMap);
 }
 
-const radarCanvas=document.getElementById("radar");
+const heatCanvas=document.getElementById("heat");
 const mapImgEl=document.getElementById("mapImg");
 const wallCache={};
-let radarTargets=[];
-let radarAngle=0;
-let radarRaf=0;
+const heatCache={};
 
 function containRect(wrap, img){
   const wrapW=wrap.clientWidth, wrapH=wrap.clientHeight;
@@ -194,7 +197,7 @@ function containRect(wrap, img){
 function classifyFloor(img){
   const key=img.src;
   if(wallCache[key]) return wallCache[key];
-  const max=160;
+  const max=180;
   const w=max;
   const h=Math.max(1, Math.round(max*img.naturalHeight/img.naturalWidth));
   const c=document.createElement("canvas");
@@ -230,84 +233,153 @@ function classifyFloor(img){
   return wallCache[key];
 }
 
-function reachableMask(grid, cxPct, cyPct, rangeM, widthM){
+function nearestWalkable(grid, sx, sy){
   const {w,h,cell}=grid;
-  const sx=Math.max(0,Math.min(w-1,Math.round(cxPct/100*w)));
-  const sy=Math.max(0,Math.min(h-1,Math.round(cyPct/100*h)));
+  if(cell[sy*w+sx]===2) return [sx,sy];
+  for(let r=1;r<12;r++){
+    for(let dy=-r;dy<=r;dy++){
+      for(let dx=-r;dx<=r;dx++){
+        const x=sx+dx, y=sy+dy;
+        if(x<0||y<0||x>=w||y>=h) continue;
+        if(cell[y*w+x]===2) return [x,y];
+      }
+    }
+  }
+  return [sx,sy];
+}
+
+function walkDistances(grid, ox, oy, maxCells){
+  const {w,h,cell}=grid;
+  const dist=new Float32Array(w*h);
+  dist.fill(1e9);
+  const q=[ox,oy];
+  dist[oy*w+ox]=0;
+  for(let n=0;n<q.length;){
+    const x=q[n++], y=q[n++];
+    const d=dist[y*w+x];
+    if(d>=maxCells) continue;
+    const nbs=[[x-1,y],[x+1,y],[x,y-1],[x,y+1]];
+    for(const [nx,ny] of nbs){
+      if(nx<0||ny<0||nx>=w||ny>=h) continue;
+      const i=ny*w+nx;
+      if(cell[i]!==2) continue;
+      if(d+1>=dist[i]) continue;
+      dist[i]=d+1;
+      q.push(nx,ny);
+    }
+  }
+  return dist;
+}
+
+function wallCrossings(grid, x0, y0, x1, y1){
+  const {w,h,cell}=grid;
+  let n=0, prev=false;
+  let x=x0, y=y0;
+  const dx=Math.abs(x1-x0), dy=Math.abs(y1-y0);
+  const sx=x0<x1?1:-1, sy=y0<y1?1:-1;
+  let err=dx-dy;
+  while(true){
+    const i=y*w+x;
+    const wall=cell[i]===1;
+    if(wall && !prev && !(x===x0 && y===y0)) n++;
+    prev=wall;
+    if(x===x1 && y===y1) break;
+    const e2=2*err;
+    if(e2>-dy){err-=dy; x+=sx;}
+    if(e2<dx){err+=dx; y+=sy;}
+    if(x<0||y<0||x>=w||y>=h) break;
+  }
+  return n;
+}
+
+function nearestRoom(map, xPct, yPct){
+  const rooms=map?.rooms||{};
+  let best=null, bestD=64;
+  Object.values(rooms).forEach(rm=>{
+    const d=(rm.x-xPct)*(rm.x-xPct)+(rm.y-yPct)*(rm.y-yPct);
+    if(d<bestD){bestD=d; best=rm;}
+  });
+  return best;
+}
+
+function heatColor(t){
+  t=Math.max(0,Math.min(1,t));
+  if(t<0.5){
+    const u=t*2;
+    return [Math.round(40+u*215), Math.round(90+u*140), Math.round(255-u*180)];
+  }
+  const u=(t-0.5)*2;
+  return [255, Math.round(230-u*200), Math.round(75-u*55)];
+}
+
+function buildHeat(grid, loc){
+  const {w,h,cell}=grid;
+  const widthM=loc.map.width_m||90;
   const mpp=widthM/w;
-  const maxCells=Math.max(1, rangeM/mpp);
-  const maxR2=maxCells*maxCells;
-  const seen=new Uint8Array(w*h);
-  const reach=new Uint8Array(w*h);
-  if(cell[sy*w+sx]===1){
-    // Wio sits on a drawn wall line — start from nearest walkable pixel.
-    let found=false;
-    for(let r=1;r<8 && !found;r++){
-      for(let dy=-r;dy<=r && !found;dy++){
-        for(let dx=-r;dx<=r && !found;dx++){
-          const x=sx+dx, y=sy+dy;
-          if(x<0||y<0||x>=w||y>=h) continue;
-          if(cell[y*w+x]===2){ startFlood(x,y); found=true; }
+  const range=loc.range||18;
+  const sigma=Math.max(4, range*0.3);
+  const sx0=Math.max(0,Math.min(w-1,Math.round(loc.x/100*w)));
+  const sy0=Math.max(0,Math.min(h-1,Math.round(loc.y/100*h)));
+  const [sx,sy]=nearestWalkable(grid,sx0,sy0);
+  const maxWalk=Math.ceil((range+3*sigma)/mpp);
+  const walk=walkDistances(grid,sx,sy,maxWalk);
+  const heat=new Float32Array(w*h);
+  let maxP=0;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const i=y*w+x;
+      if(cell[i]!==2 || walk[i]>maxWalk) continue;
+      const euclid=Math.hypot(x-sx,y-sy)*mpp;
+      const geo=walk[i]*mpp;
+      const walls=wallCrossings(grid,sx,sy,x,y);
+      const dEff=0.4*geo + 0.6*euclid + 3.2*walls;
+      const z=(dEff-range)/sigma;
+      const p=Math.exp(-0.5*z*z);
+      heat[i]=p;
+      if(p>maxP) maxP=p;
+    }
+  }
+  const peaks=[];
+  const thresh=maxP*0.35;
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      const i=y*w+x;
+      const p=heat[i];
+      if(p<thresh) continue;
+      let local=true;
+      for(let dy=-1;dy<=1 && local;dy++){
+        for(let dx=-1;dx<=1;dx++){
+          if(!dx && !dy) continue;
+          if(heat[(y+dy)*w+(x+dx)]>p) local=false;
         }
       }
-    }
-    if(!found) startFlood(sx,sy);
-  }else startFlood(sx,sy);
-  function startFlood(ox,oy){
-    const q=[ox,oy];
-    seen[oy*w+ox]=1;
-    for(let n=0;n<q.length;){
-      const x=q[n++], y=q[n++];
-      const dx=x-sx, dy=y-sy;
-      if(dx*dx+dy*dy>maxR2) continue;
-      if(cell[y*w+x]===1) continue;
-      reach[y*w+x]=1;
-      const nbs=[[x-1,y],[x+1,y],[x,y-1],[x,y+1]];
-      for(const [nx,ny] of nbs){
-        if(nx<0||ny<0||nx>=w||ny>=h) continue;
-        const i=ny*w+nx;
-        if(seen[i]||cell[i]===0||cell[i]===1) continue;
-        seen[i]=1;
-        q.push(nx,ny);
-      }
+      if(local) peaks.push({x,y,p});
     }
   }
-  return {w,h,reach,sx,sy,maxCells};
-}
-
-function rayHit(grid, sx, sy, ang, maxCells){
-  const {w,h,cell}=grid;
-  const ca=Math.cos(ang), sa=Math.sin(ang);
-  let x=sx+0.5, y=sy+0.5;
-  for(let i=0;i<maxCells;i++){
-    x+=ca; y+=sa;
-    const ix=Math.round(x), iy=Math.round(y);
-    if(ix<0||iy<0||ix>=w||iy>=h) return i;
-    const c=cell[iy*w+ix];
-    if(c===0||c===1) return i;
-  }
-  return maxCells;
-}
-
-function updateRadar(open, activeMap){
-  radarTargets=[];
-  (open||[]).forEach(r=>{
-    const loc=locate(r);
-    if(!loc||!loc.map) return;
-    if(activeMap && loc.mapKey!==activeMap) return;
-    radarTargets.push({
-      loc,
-      color:COL_HEX[r.level]||COL_HEX.LOW,
-      range:loc.range||18,
-      selected:r.id===selected
+  peaks.sort((a,b)=>b.p-a.p);
+  const minSep=Math.max(5, 6/mpp);
+  const chosen=[];
+  peaks.forEach(pk=>{
+    if(chosen.length>=3) return;
+    if(chosen.some(c=>Math.hypot(c.x-pk.x,c.y-pk.y)<minSep)) return;
+    const xPct=pk.x/w*100, yPct=pk.y/h*100;
+    const room=nearestRoom(loc.map, xPct, yPct);
+    const share=maxP?Math.round(100*pk.p/maxP):0;
+    chosen.push({
+      x:pk.x, y:pk.y, p:pk.p, xPct, yPct, share,
+      label: room?room.label:"Corridor / open area"
     });
   });
+  return {w,h,heat,maxP,peaks:chosen,sx,sy};
 }
 
-function drawRadar(){
+function drawHeat(row){
   const wrap=document.getElementById("map");
   const img=mapImgEl;
-  const cv=radarCanvas;
+  const cv=heatCanvas;
+  const list=document.getElementById("guessList");
+  wrap.querySelectorAll(".guess").forEach(p=>p.remove());
+  if(list) list.replaceChildren();
   if(!wrap||!img||!cv) return;
   const dpr=window.devicePixelRatio||1;
   const W=wrap.clientWidth, H=wrap.clientHeight;
@@ -318,86 +390,59 @@ function drawRadar(){
   const ctx=cv.getContext("2d");
   ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,W,H);
-  if(!img.naturalWidth || !radarTargets.length) return;
+  if(!row || !img.naturalWidth) return;
+  const loc=locate(row);
+  if(!loc||!loc.map) return;
   const box=containRect(wrap, img);
-  let grid=null;
-  try{ grid=classifyFloor(img); }catch(e){ grid=null; }
-  radarTargets.forEach((t, idx)=>{
-    const cx=box.x + t.loc.x/100*box.w;
-    const cy=box.y + t.loc.y/100*box.h;
-    const widthM=t.loc.map.width_m||90;
-    const pxPerM=box.w/widthM;
-    const rad=t.range*pxPerM;
-    const color=t.color;
-    let mask=null;
-    if(grid){
-      mask=reachableMask(grid, t.loc.x, t.loc.y, t.range, widthM);
-      ctx.save();
-      ctx.globalAlpha=t.selected?0.28:0.16;
-      ctx.fillStyle=color;
-      const cw=box.w/mask.w, ch=box.h/mask.h;
-      for(let y=0;y<mask.h;y++){
-        for(let x=0;x<mask.w;x++){
-          if(!mask.reach[y*mask.w+x]) continue;
-          ctx.fillRect(box.x+x*cw, box.y+y*ch, cw+0.5, ch+0.5);
-        }
-      }
-      ctx.restore();
-    }else{
-      ctx.beginPath();
-      ctx.arc(cx,cy,rad,0,Math.PI*2);
-      ctx.fillStyle=color;
-      ctx.globalAlpha=t.selected?0.18:0.1;
-      ctx.fill();
-      ctx.globalAlpha=1;
+  let grid;
+  try{ grid=classifyFloor(img); }catch(e){ return; }
+  const key=[img.src, loc.x, loc.y, loc.range].join("|");
+  const model=heatCache[key] || (heatCache[key]=buildHeat(grid, loc));
+  if(!model.maxP) return;
+  const cw=box.w/model.w, ch=box.h/model.h;
+  const cut=model.maxP*0.08;
+  for(let y=0;y<model.h;y++){
+    for(let x=0;x<model.w;x++){
+      const p=model.heat[y*model.w+x];
+      if(p<cut) continue;
+      const t=(p-cut)/(model.maxP-cut);
+      const [r,g,b]=heatColor(t);
+      ctx.fillStyle=`rgba(${r},${g},${b},${0.18+0.5*t})`;
+      ctx.fillRect(box.x+x*cw, box.y+y*ch, cw+0.4, ch+0.4);
     }
-    ctx.beginPath();
-    ctx.arc(cx,cy,rad,0,Math.PI*2);
-    ctx.strokeStyle=color;
-    ctx.globalAlpha=0.7;
-    ctx.setLineDash([6,5]);
-    ctx.lineWidth=t.selected?2.2:1.4;
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.globalAlpha=1;
-    const ang=radarAngle + idx*0.9;
-    let sweepLen=rad;
-    if(grid && mask){
-      const hit=rayHit(grid, mask.sx, mask.sy, ang, mask.maxCells);
-      sweepLen=hit*(box.w/grid.w);
+  }
+  const wioX=box.x+loc.x/100*box.w, wioY=box.y+loc.y/100*box.h;
+  ctx.beginPath();
+  ctx.arc(wioX,wioY,5,0,Math.PI*2);
+  ctx.fillStyle="#111";
+  ctx.fill();
+  ctx.strokeStyle="#fff";
+  ctx.lineWidth=1.5;
+  ctx.stroke();
+  const colors=["#b3261e","#d9622b","#2f7d5b"];
+  model.peaks.forEach((pk,i)=>{
+    const pin=el("div","guess",String(i+1));
+    pin.style.left=(box.x+pk.xPct/100*box.w)+"px";
+    pin.style.top=(box.y+pk.yPct/100*box.h)+"px";
+    pin.style.background=colors[i]||colors[0];
+    pin.title=pk.label+" · "+pk.share+"%";
+    wrap.append(pin);
+    if(list){
+      const li=document.createElement("li");
+      li.textContent="#"+ (i+1) +" "+pk.label+" · "+pk.share+"% match for ~"+loc.range.toFixed(0)+" m Wi‑Fi range";
+      list.append(li);
     }
-    ctx.beginPath();
-    ctx.moveTo(cx,cy);
-    ctx.lineTo(cx+Math.cos(ang)*sweepLen, cy+Math.sin(ang)*sweepLen);
-    ctx.strokeStyle=color;
-    ctx.lineWidth=2;
-    ctx.globalAlpha=0.9;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx,cy,sweepLen,ang-0.45,ang);
-    ctx.lineTo(cx,cy);
-    ctx.closePath();
-    ctx.fillStyle=color;
-    ctx.globalAlpha=0.2;
-    ctx.fill();
-    ctx.globalAlpha=1;
-    ctx.beginPath();
-    ctx.arc(cx,cy,5,0,Math.PI*2);
-    ctx.fillStyle=color;
-    ctx.fill();
-    ctx.strokeStyle="#fff";
-    ctx.lineWidth=1.5;
-    ctx.stroke();
   });
 }
 
-function radarLoop(ts){
-  radarAngle=(ts/1800)%(Math.PI*2);
-  drawRadar();
-  radarRaf=requestAnimationFrame(radarLoop);
-}
-if(!radarRaf) radarRaf=requestAnimationFrame(radarLoop);
-window.addEventListener("resize", drawRadar);
+mapImgEl.addEventListener("load", ()=>{
+  const focus=rowsCache.find(r=>r.id===selected)||rowsCache[0];
+  if(focus) drawHeat(focus);
+});
+window.addEventListener("resize", ()=>{
+  const focus=rowsCache.find(r=>r.id===selected)||rowsCache[0];
+  if(focus) drawHeat(focus);
+});
 
 async function setStatus(id,status){
   const replyText=replyDrafts[id]||"";
