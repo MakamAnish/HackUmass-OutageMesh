@@ -54,6 +54,17 @@ def _ensure_db(db_path: str = DB_PATH):
 
 
 def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
+    stored, _created = insert_outcome(row, db_path)
+    return stored
+
+
+def insert_outcome(row: dict[str, Any], db_path: str = DB_PATH) -> tuple[dict | None, bool]:
+    """Insert a message unless its id is already stored.
+
+    Returns the stored row and whether this call created it. Duplicate packets
+    still return the existing row, with created False. created follows the
+    INSERT cursor's affected-row count.
+    """
     _ensure_db(db_path)
     prepared = {
         "id": row.get("id"),
@@ -77,10 +88,11 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
         "range_m": row.get("range_m"),
     }
     if not prepared["id"]:
-        return None
+        return None, False
     conn = _connect(db_path)
     try:
-        conn.execute(
+        before = conn.total_changes
+        cur = conn.execute(
             """
             INSERT OR IGNORE INTO messages (
               id, zone, building, floor, room, category, text, level, kw_score,
@@ -110,12 +122,17 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
                 prepared["range_m"],
             ),
         )
+        # rowcount is 1 for a new row and 0 when INSERT OR IGNORE skips a duplicate.
+        if cur.rowcount >= 0:
+            created = cur.rowcount > 0
+        else:
+            created = conn.total_changes > before
         conn.commit()
         cur = conn.execute("SELECT * FROM messages WHERE id = ?", (prepared["id"],))
         stored = dict(cur.fetchone() or {})
     finally:
         conn.close()
-    return stored
+    return stored, created
 
 
 def list_messages(since: str | None = None, db_path: str = DB_PATH):

@@ -16,6 +16,7 @@ from db import DB_PATH, init as init_db, list_messages, set_status
 from ingest import ingest
 from protocol import encode_ack, sanitize
 import radio_worker
+from sos_alarm import alarm
 
 _sim_n = 0
 _ack_queue = queue.Queue()
@@ -55,8 +56,22 @@ def _send_ack_queue() -> None:
             _ack_queue.task_done()
 
 
+def _is_sos(row) -> bool:
+    return bool(row) and bool(row.get("id")) and bool(row.get("sos") or row.get("category") == "SOS")
+
+
+def on_packet(payload, rssi=None, snr=None):
+    """Store one radio packet and start the alarm only for a newly inserted SOS."""
+    outcome: dict = {}
+    row = ingest(payload, rssi, snr, outcome=outcome)
+    if outcome.get("created") and _is_sos(row):
+        logging.getLogger("receiver").info("new SOS %s", row.get("id"))
+        alarm.start()
+    return row
+
+
 threading.Thread(target=_send_ack_queue, name="ack_sender", daemon=True).start()
-radio_worker.start(ingest)
+radio_worker.start(on_packet)
 logging.getLogger("receiver").info("radio worker started")
 
 
@@ -89,6 +104,22 @@ def api_set_status(mid):
     set_status(mid, status_value)
     _ack_queue.put((mid.upper(), ack_statuses[status], sanitize(reply_text)[:50]))
     return jsonify({"ok": True, "queued": True})
+
+
+@app.get("/api/alarm/status")
+def alarm_status():
+    return jsonify(alarm.status())
+
+
+@app.post("/api/alarm/silence")
+def alarm_silence():
+    alarm.stop()
+    state = alarm.status()
+    body = {"ok": not state["active"], "active": state["active"]}
+    if state.get("error"):
+        body["error"] = state["error"]
+        body["ok"] = False
+    return jsonify(body)
 
 
 @app.get("/api/health")

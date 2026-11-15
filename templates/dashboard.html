@@ -21,7 +21,16 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
 .tools button:hover,.floors button:hover,.act button:hover{filter:brightness(1.08);transform:translateY(-1px)}
 .tools #sim{background:var(--teal);border-color:var(--teal);color:#052d2a}
 .tools #clr{background:transparent;color:#d4deea}
-#sosBanner{padding:.8rem clamp(1rem,3vw,2.5rem);background:#c3323e;color:#fff;font-weight:750;letter-spacing:.01em}
+#sosBanner{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem 1.25rem;padding:.8rem clamp(1rem,3vw,2.5rem);background:#c3323e;color:#fff;font-weight:750;letter-spacing:.01em}
+#sosBanner[hidden]{display:none}
+#sosBannerText{min-width:12rem}
+#alarmControls{display:flex;flex-wrap:wrap;align-items:center;gap:.7rem}
+#alarmControls[hidden]{display:none}
+#alarmState{font-weight:650;font-size:.92rem}
+#silenceAlarm{font:inherit;font-weight:750;border:1px solid #fff;border-radius:.7rem;padding:.48rem .9rem;background:#fff;color:#8f1d28}
+#silenceAlarm:focus-visible{outline:2px solid #fff;outline-offset:2px}
+#silenceAlarm:hover{filter:brightness(1.06)}
+#silenceAlarm:disabled{cursor:default;opacity:.75}
 .layout{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:1.25rem;max-width:90rem;margin:0 auto;padding:1.4rem clamp(1rem,3vw,2.5rem)}
 @media(max-width:900px){.layout{grid-template-columns:1fr}}
 .map-panel{align-self:start;background:var(--surface);border:1px solid var(--line);border-radius:1rem;padding:1rem;box-shadow:var(--shadow)}
@@ -80,7 +89,13 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
     <button id="clr" type="button">Clear all</button>
   </div>
 </header>
-<div id="sosBanner" hidden>SOS — open emergency on the map</div>
+<div id="sosBanner" hidden>
+  <div id="sosBannerText">SOS — open emergency on the map</div>
+  <div id="alarmControls" hidden>
+    <span id="alarmState" role="status" aria-live="polite"></span>
+    <button id="silenceAlarm" type="button" hidden>Silence Alarm</button>
+  </div>
+</div>
 <div class="layout">
   <section class="map-panel">
     <h2>Location map</h2>
@@ -563,15 +578,63 @@ document.addEventListener("pointerdown", ()=>{pointerHeld=true;}, true);
 document.addEventListener("pointerup", ()=>{pointerHeld=false;}, true);
 document.addEventListener("pointercancel", ()=>{pointerHeld=false;}, true);
 
+let alarmActive=false, alarmError="", alarmEpoch=0;
+
+async function fetchAlarmState(){
+  const res=await fetch("/api/alarm/status");
+  if(!res.ok) return null;
+  return await res.json();
+}
+
+function renderAlarmChrome(){
+  const banner=document.getElementById("sosBanner");
+  const open=Number(banner.dataset.open||"0");
+  const btn=document.getElementById("silenceAlarm");
+  const state=document.getElementById("alarmState");
+  const controls=document.getElementById("alarmControls");
+  const failed=!alarmActive && !!alarmError;
+  btn.hidden=!alarmActive;
+  btn.disabled=!alarmActive;
+  if(alarmActive){
+    state.hidden=false;
+    state.textContent="Audible alarm active";
+  }else if(failed){
+    state.hidden=false;
+    state.textContent="Alarm unavailable";
+  }else if(open){
+    state.hidden=false;
+    state.textContent="Alarm silenced";
+  }else{
+    state.hidden=true;
+    state.textContent="";
+  }
+  controls.hidden=state.hidden && btn.hidden;
+  banner.hidden=!open && !alarmActive && !failed;
+}
+
+function noteAlarmState(data, epoch){
+  if(!data || epoch!==alarmEpoch) return;
+  alarmActive=!!data.active;
+  alarmError=data.error||"";
+}
+
 async function load(force){
-  if(!force && (typingReply() || pointerHeld)) return;
+  const epoch=alarmEpoch;
+  const alarmPromise=fetchAlarmState().catch(()=>null);
+  if(!force && (typingReply() || pointerHeld)){
+    noteAlarmState(await alarmPromise, epoch);
+    renderAlarmChrome();
+    return;
+  }
   if(!helpPoints){
     helpPoints=await (await fetch("/api/map")).json();
     renderFloorTabs();
   }
   const rows=await (await fetch("/api/messages")).json();
+  const alarm=await alarmPromise;
   const snap=JSON.stringify(rows);
   rowsCache=rows;
+  noteAlarmState(alarm, epoch);
   if(!force && snap===rowsSnap){
     updateSosBanner(rows);
     return;
@@ -590,9 +653,38 @@ async function load(force){
 function updateSosBanner(rows){
   const open=(rows||[]).filter(r=>(r.sos||r.category==="SOS") && r.status!=="resolved");
   const banner=document.getElementById("sosBanner");
-  banner.hidden=!open.length;
-  banner.textContent=open.length?("SOS — "+open.length+" open emergency request"+(open.length>1?"s":"")):"SOS";
+  const text=document.getElementById("sosBannerText");
+  banner.dataset.open=String(open.length);
+  text.hidden=!open.length;
+  text.textContent=open.length?("SOS — "+open.length+" open emergency request"+(open.length>1?"s":"")):"SOS";
+  renderAlarmChrome();
 }
+
+document.getElementById("silenceAlarm").addEventListener("click", async ()=>{
+  const btn=document.getElementById("silenceAlarm");
+  alarmEpoch++;
+  btn.disabled=true;
+  try{
+    const res=await fetch("/api/alarm/silence",{method:"POST"});
+    let data={};
+    try{ data=await res.json(); }catch(err){ data={}; }
+    if(!res.ok || data.ok===false || data.active){
+      throw new Error(data.error||"silence failed");
+    }
+    alarmActive=false;
+    alarmError="";
+    alarmEpoch++;
+    renderAlarmChrome();
+  }catch(err){
+    btn.hidden=false;
+    btn.disabled=false;
+    const state=document.getElementById("alarmState");
+    state.hidden=false;
+    state.textContent="Could not silence the alarm. Try again.";
+    document.getElementById("alarmControls").hidden=false;
+    document.getElementById("sosBanner").hidden=false;
+  }
+});
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
 document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;await load(true);}};
 load(true);

@@ -1,18 +1,35 @@
 import logging
 from datetime import datetime, timezone
 
-from db import insert
+from db import insert_outcome
 from protocol import decode, decode_ack, decode_done
 from triage import final_level, keyword_score
 
 logger = logging.getLogger(__name__)
 
 
-def ingest(payload: str, rssi: int | None = None, snr: float | None = None) -> dict | None:
-    """Decode a packet, triage it, and store a row. Returns the stored row or None."""
+def ingest(
+    payload: str,
+    rssi: int | None = None,
+    snr: float | None = None,
+    *,
+    outcome: dict | None = None,
+) -> dict | None:
+    """Decode a packet, triage it, and store a row. Returns the stored row or None.
+
+    When outcome is given, outcome["created"] is True only if this call inserted
+    a new row. Retransmissions of an existing id return the stored row with
+    created False. Callers that ignore outcome keep the previous return value.
+    """
+
+    def finish(row, created: bool):
+        if outcome is not None:
+            outcome["created"] = created
+        return row
+
     if decode_ack(payload) is not None or decode_done(payload) is not None:
         # Status packets are for the help point (sender), not the dashboard.
-        return None
+        return finish(None, False)
     try:
         decoded = decode(payload)
         kw = keyword_score(decoded["category"], decoded["text"])
@@ -38,7 +55,8 @@ def ingest(payload: str, rssi: int | None = None, snr: float | None = None) -> d
             "sos": 1 if decoded.get("sos") else 0,
             "range_m": decoded.get("range_m"),
         }
-        return insert(row)
-    except Exception as exc:  # pragma: no cover - defensive per contract
+        stored, created = insert_outcome(row)
+        return finish(stored, created)
+    except Exception:  # pragma: no cover - defensive per contract
         logger.exception("Dropping invalid packet: %s", payload)
-        return None
+        return finish(None, False)
