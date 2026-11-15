@@ -483,7 +483,7 @@ function makeCard(r){
   const level=r.level||"LOW";
   const loc=locate(r);
   const sos=!!(r.sos||r.category==="SOS");
-  const showAlarm=sos && r.status!=="resolved" && ringing.has(sosId(r));
+  const showAlarm=sos && r.status!=="resolved" && alarmLive.has(sosId(r));
   const d=el("div","m"+(sos?" sos":"")+(showAlarm?" has-alarm":"")+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
   d.style.setProperty("--c",COL[level]||COL.LOW);
   d.onclick=()=>{selected=r.id;viewMap=null;showMapFor(r);renderList(rowsCache);renderPins(rowsCache);renderFloorTabs();};
@@ -532,12 +532,13 @@ function makeCard(r){
   if(showAlarm){
     const alarm=el("button","sos-alarm","Alarm off");
     alarm.type="button";
-    alarm.addEventListener("pointerdown", e=>dismissAlarm(e,r,alarm), true);
-    alarm.addEventListener("click", e=>{
+    const shut=e=>{
       e.preventDefault();
       e.stopPropagation();
-      if(e.detail===0) dismissAlarm(e,r,alarm);
-    }, true);
+      silenceAlarm();
+    };
+    alarm.addEventListener("pointerdown", shut, true);
+    alarm.addEventListener("click", shut, true);
     d.append(alarm);
   }
   seen.add(r.id);
@@ -605,108 +606,76 @@ async function load(force){
   first=false;
 }
 
-let audioCtx=null, alarmTimer=null, alarmGen=0, alarmOn=false, announced=new Set(), ringing=new Set();
+let alarmCtx=null, alarmTimer=null, heardSos=new Set(), alarmLive=new Set();
 function sosId(r){return String(r&&r.id||"").toUpperCase()}
 function openSos(rows){return (rows||[]).filter(r=>(r.sos||r.category==="SOS") && r.status!=="resolved")}
-function chokeSpeech(){
-  if(!window.speechSynthesis) return;
-  try{speechSynthesis.pause();}catch(e){}
-  try{speechSynthesis.cancel();}catch(e){}
-  try{
-    const u=new SpeechSynthesisUtterance("");
-    speechSynthesis.speak(u);
-    speechSynthesis.cancel();
-  }catch(e){}
-}
-function stopAlarm(){
-  alarmOn=false;
-  alarmGen++;
+function killSound(){
   if(alarmTimer){clearInterval(alarmTimer);alarmTimer=null;}
-  chokeSpeech();
-  if(audioCtx){
-    const ctx=audioCtx;
-    audioCtx=null;
-    try{ctx.suspend();}catch(e){}
+  if(window.speechSynthesis){try{speechSynthesis.cancel();}catch(e){}}
+  if(alarmCtx){
+    const ctx=alarmCtx;
+    alarmCtx=null;
     try{ctx.close();}catch(e){}
   }
 }
-function startAlarmSound(){
-  if(!ringing.size){stopAlarm();return;}
-  if(alarmTimer) return;
-  alarmOn=true;
-  alarmTimer=setInterval(beep, 700);
-  beep();
-  speakSos();
-}
-function dismissAlarm(e,r,btn){
-  e.preventDefault();
-  e.stopPropagation();
-  if(e.stopImmediatePropagation) e.stopImmediatePropagation();
-  ringing.delete(sosId(r));
-  if(btn){
-    const card=btn.closest(".m");
-    btn.remove();
+function silenceAlarm(){
+  alarmLive.clear();
+  killSound();
+  document.querySelectorAll(".sos-alarm").forEach(b=>{
+    const card=b.closest(".m");
+    b.remove();
     if(card) card.classList.remove("has-alarm");
-  }
-  if(!ringing.size) stopAlarm();
+  });
 }
 function beep(){
-  if(!alarmOn || !ringing.size) return;
-  const gen=alarmGen;
+  if(!alarmLive.size || !alarmCtx) return;
   try{
-    if(!audioCtx || audioCtx.state==="closed") audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-    const ctx=audioCtx;
-    const play=()=>{
-      if(!alarmOn || !ringing.size || gen!==alarmGen || audioCtx!==ctx || ctx.state==="closed") return;
-      const o=ctx.createOscillator();
-      const g=ctx.createGain();
-      o.type="square";
-      o.frequency.value=880;
-      g.gain.value=0.08;
-      o.connect(g); g.connect(ctx.destination);
-      o.start();
-      o.stop(ctx.currentTime+0.25);
-    };
-    if(ctx.state==="suspended") ctx.resume().then(play).catch(()=>{});
-    else play();
+    const ctx=alarmCtx;
+    if(ctx.state==="closed") return;
+    const o=ctx.createOscillator();
+    const g=ctx.createGain();
+    o.type="square";
+    o.frequency.value=880;
+    g.gain.value=0.08;
+    o.connect(g); g.connect(ctx.destination);
+    o.start();
+    o.stop(ctx.currentTime+0.25);
   }catch(e){}
 }
-function speakSos(){
-  if(!alarmOn || !ringing.size || !window.speechSynthesis) return;
-  chokeSpeech();
-  const u=new SpeechSynthesisUtterance("SOS. Emergency help request.");
-  u.rate=1;
-  u.onstart=()=>{if(!alarmOn || !ringing.size) chokeSpeech();};
-  speechSynthesis.speak(u);
+function startAlarm(){
+  killSound();
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC) return;
+  alarmCtx=new AC();
+  alarmTimer=setInterval(beep, 700);
+  const kick=()=>{ if(alarmLive.size) beep(); };
+  if(alarmCtx.state==="suspended") alarmCtx.resume().then(kick).catch(()=>{});
+  else kick();
+  if(window.speechSynthesis && alarmLive.size){
+    const u=new SpeechSynthesisUtterance("SOS. Emergency help request.");
+    u.onstart=()=>{ if(!alarmLive.size) speechSynthesis.cancel(); };
+    speechSynthesis.speak(u);
+  }
 }
 function syncAlarm(rows){
   const open=openSos(rows);
-  const openIds=new Set(open.map(sosId));
-  [...ringing].forEach(id=>{if(!openIds.has(id)) ringing.delete(id);});
   const banner=document.getElementById("sosBanner");
   banner.hidden=!open.length;
   banner.textContent=open.length?("SOS — "+open.length+" open emergency request"+(open.length>1?"s":"")):"SOS";
-  if(!open.length){
-    ringing.clear();
-    stopAlarm();
-    return;
-  }
-  const fresh=open.filter(r=>!announced.has(sosId(r)));
-  if(fresh.length){
-    stopAlarm();
-    fresh.forEach(r=>{
-      announced.add(sosId(r));
-      ringing.add(sosId(r));
-    });
-    renderList(rowsCache);
-    startAlarmSound();
-    return;
-  }
-  if(!ringing.size) stopAlarm();
-  else startAlarmSound();
+  const openIds=new Set(open.map(sosId));
+  [...alarmLive].forEach(id=>{if(!openIds.has(id)) alarmLive.delete(id);});
+  if(!alarmLive.size) killSound();
+  const fresh=open.filter(r=>!heardSos.has(sosId(r)));
+  if(!fresh.length) return;
+  fresh.forEach(r=>{
+    heardSos.add(sosId(r));
+    alarmLive.add(sosId(r));
+  });
+  renderList(rowsCache);
+  startAlarm();
 }
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
-document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();ringing=new Set();stopAlarm();await load(true);}};
+document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;heardSos=new Set();alarmLive=new Set();killSound();await load(true);}};
 load(true);
 setInterval(()=>load(false),2000);
 </script>
