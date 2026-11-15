@@ -96,6 +96,7 @@ def test_receiver_status_route_enqueues_ack_without_sending_in_request(monkeypat
     assert b"Alarm off" not in dashboard.data
     assert b"speechSynthesis" not in dashboard.data
     assert b"AudioContext" not in dashboard.data
+    assert b"Follow selected" not in dashboard.data
     assert b"https://" not in dashboard.data
 
 
