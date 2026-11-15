@@ -76,7 +76,6 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
     </div>
   </div>
   <div class="tools">
-    <button id="alarmBtn" type="button">Alarm on</button>
     <button id="sim" type="button">Simulate message</button>
     <button id="clr" type="button">Clear all</button>
   </div>
@@ -578,7 +577,7 @@ async function load(force){
   const snap=JSON.stringify(rows);
   rowsCache=rows;
   if(!force && snap===rowsSnap){
-    syncAlarm(rows);
+    updateSosBanner(rows);
     return;
   }
   rowsSnap=snap;
@@ -588,59 +587,18 @@ async function load(force){
   else if(viewMap) showMapKey(viewMap);
   renderList(rows);
   renderPins(rows);
-  syncAlarm(rows);
+  updateSosBanner(rows);
   first=false;
 }
 
-let alarmMuted=false, audioCtx=null, alarmTimer=null, announced=new Set();
-function stopAlarm(){
-  if(alarmTimer){clearInterval(alarmTimer);alarmTimer=null;}
-  if(audioCtx){try{audioCtx.suspend();}catch(e){}}
-}
-function beep(){
-  if(alarmMuted) return;
-  try{
-    if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-    if(audioCtx.state==="suspended") audioCtx.resume();
-    const o=audioCtx.createOscillator();
-    const g=audioCtx.createGain();
-    o.type="square";
-    o.frequency.value=880;
-    g.gain.value=0.08;
-    o.connect(g); g.connect(audioCtx.destination);
-    o.start();
-    o.stop(audioCtx.currentTime+0.25);
-  }catch(e){}
-}
-function speakSos(){
-  if(alarmMuted || !window.speechSynthesis) return;
-  const u=new SpeechSynthesisUtterance("SOS. Emergency help request.");
-  u.rate=1;
-  speechSynthesis.speak(u);
-}
-function syncAlarm(rows){
+function updateSosBanner(rows){
   const open=(rows||[]).filter(r=>(r.sos||r.category==="SOS") && r.status!=="resolved");
   const banner=document.getElementById("sosBanner");
   banner.hidden=!open.length;
   banner.textContent=open.length?("SOS — "+open.length+" open emergency request"+(open.length>1?"s":"")):"SOS";
-  if(!open.length){stopAlarm();return;}
-  open.forEach(r=>{
-    if(!announced.has(r.id)){
-      announced.add(r.id);
-      speakSos();
-    }
-  });
-  if(alarmMuted){stopAlarm();return;}
-  if(!alarmTimer) alarmTimer=setInterval(beep,700);
 }
-document.getElementById("alarmBtn").onclick=()=>{
-  alarmMuted=!alarmMuted;
-  document.getElementById("alarmBtn").textContent=alarmMuted?"Alarm off":"Alarm on";
-  if(alarmMuted){stopAlarm();if(window.speechSynthesis)speechSynthesis.cancel();}
-  else syncAlarm(rowsCache);
-};
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
-document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();stopAlarm();await load(true);}};
+document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;await load(true);}};
 load(true);
 setInterval(()=>load(false),2000);
 </script>

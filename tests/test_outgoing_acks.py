@@ -91,10 +91,11 @@ def test_receiver_status_route_enqueues_ack_without_sending_in_request(monkeypat
     assert b"Blackout" not in dashboard.data
     assert b"On my way" in dashboard.data
     assert b"TETHER" in dashboard.data
-    assert b'id="alarmBtn"' in dashboard.data
-    assert b"Alarm on" in dashboard.data
-    assert b"sosAlarmBtn" not in dashboard.data
-    assert b"sos-alarm" not in dashboard.data
+    assert b"alarmBtn" not in dashboard.data
+    assert b"Alarm on" not in dashboard.data
+    assert b"Alarm off" not in dashboard.data
+    assert b"speechSynthesis" not in dashboard.data
+    assert b"AudioContext" not in dashboard.data
     assert b"https://" not in dashboard.data
 
 

@@ -62,7 +62,7 @@ textarea{min-height:6rem;resize:vertical}
 <p class="s">No app needed. Sending measures how far this phone is from the help-point Wio over Wi‑Fi, then radios the request.</p>
 </div>
 <button id="sos" type="button">SOS</button>
-<p class="s" id="sosNote">SOS is always high priority and alerts responders with sound and voice.</p>
+<p class="s" id="sosNote">SOS is always high priority.</p>
 <label>What is the situation?</label>
 <div class="cats" id="cats">
 {% for k,v in cats.items() %}<button type="button" data-c="{{k}}" aria-pressed="{{ 'true' if k=='MED' else 'false' }}">{{v}}</button>{% endfor %}
