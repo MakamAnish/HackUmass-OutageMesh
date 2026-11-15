@@ -22,6 +22,7 @@ h1{font-size:1.3rem;margin:0}
 #mapLabel{color:var(--mute);font-size:.85rem;margin:0 0 .5rem;min-height:1.2em}
 .map-wrap{position:relative;width:100%;background:#ddd;border:1px solid var(--line);overflow:hidden;aspect-ratio:1/1}
 .map-wrap img{display:block;width:100%;height:100%;object-fit:contain;background:#fff}
+#radar{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}
 .pin{position:absolute;transform:translate(-50%,-100%);width:1.6rem;height:1.6rem;border-radius:50% 50% 50% 0;rotate:-45deg;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);cursor:pointer;z-index:2}
 .pin.active{outline:3px solid var(--ink);outline-offset:2px;z-index:3}
 .pin .n{position:absolute;inset:0;display:grid;place-items:center;rotate:45deg;color:#fff;font:700 .7rem system-ui;pointer-events:none}
@@ -59,9 +60,10 @@ h1{font-size:1.3rem;margin:0}
   <section class="map-panel">
     <h2>Location map</h2>
     <div class="floors" id="floors"></div>
-    <p id="mapLabel">Pin = help point (Wio), or the room the sender typed if provided.</p>
+    <p id="mapLabel">Radar = estimated distance from the help-point Wio. Walls clip the sweep.</p>
     <div class="map-wrap" id="map">
       <img id="mapImg" alt="Floor plan" src="">
+      <canvas id="radar"></canvas>
     </div>
   </section>
   <section id="list"><div class="empty">No messages yet. Waiting for the radio.</div></section>
@@ -87,24 +89,21 @@ function nodeFromMsg(r){
   return Object.values(helpPoints?.nodes||{}).find(n=>n.building===b)||null;
 }
 
-/** Resolve where to put the pin for a message. */
+/** Pin and radar center at the help-point Wio on this floor. */
 function locate(r){
   const node=nodeFromMsg(r);
   const building=(r.building||node?.building||"CC").toUpperCase();
   const floor=String(r.floor||node?.floor||"1");
-  const room=(r.room||"").toUpperCase();
   const mapKey=building+"-"+floor;
   const map=helpPoints.maps?.[mapKey];
-  if(room && map?.rooms?.[room]){
-    const rm=map.rooms[room];
-    return {mapKey, map, x:rm.x, y:rm.y, label:rm.label||room, kind:"room"};
-  }
-  if(node){
-    const nmap=helpPoints.maps?.[node.map];
-    return {mapKey:node.map, map:nmap, x:node.x, y:node.y, label:node.label, kind:"help"};
+  const range=r.range_m!=null?Number(r.range_m):18;
+  if(node && helpPoints.maps?.[node.map]){
+    const nmap=helpPoints.maps[node.map];
+    const where=node.label+(range?" · ~"+range.toFixed(0)+" m":"");
+    return {mapKey:node.map, map:nmap, x:node.x, y:node.y, label:where, kind:"help", range};
   }
   if(map){
-    return {mapKey, map, x:50, y:50, label:building+" floor "+floor, kind:"floor"};
+    return {mapKey, map, x:50, y:50, label:building+" floor "+floor+" · ~"+range.toFixed(0)+" m", kind:"floor", range};
   }
   return null;
 }
@@ -174,7 +173,231 @@ function renderPins(rows){
     pin.onclick=e=>{e.stopPropagation();selected=top.id;viewMap=null;showMapFor(top);renderList(rowsCache);renderPins(rowsCache);renderFloorTabs();};
     wrap.append(pin);
   });
+  updateRadar(open, activeMap);
 }
+
+const radarCanvas=document.getElementById("radar");
+const mapImgEl=document.getElementById("mapImg");
+const wallCache={};
+let radarTargets=[];
+let radarAngle=0;
+let radarRaf=0;
+
+function containRect(wrap, img){
+  const wrapW=wrap.clientWidth, wrapH=wrap.clientHeight;
+  const imgW=img.naturalWidth||1, imgH=img.naturalHeight||1;
+  const s=Math.min(wrapW/imgW, wrapH/imgH);
+  const w=imgW*s, h=imgH*s;
+  return {x:(wrapW-w)/2, y:(wrapH-h)/2, w, h, imgW, imgH};
+}
+
+function classifyFloor(img){
+  const key=img.src;
+  if(wallCache[key]) return wallCache[key];
+  const max=160;
+  const w=max;
+  const h=Math.max(1, Math.round(max*img.naturalHeight/img.naturalWidth));
+  const c=document.createElement("canvas");
+  c.width=w; c.height=h;
+  const g=c.getContext("2d",{willReadFrequently:true});
+  g.drawImage(img,0,0,w,h);
+  const data=g.getImageData(0,0,w,h).data;
+  const cell=new Uint8Array(w*h); // 0 outside, 1 wall, 2 walk
+  const luma=(i)=>0.2126*data[i]+0.7152*data[i+1]+0.0722*data[i+2];
+  const WHITE=232, WALL=118;
+  const q=[];
+  const mark=(x,y)=>{
+    const i=y*w+x;
+    if(cell[i]) return;
+    if(luma(i*4)<WHITE) return;
+    cell[i]=9;
+    q.push(x,y);
+  };
+  for(let x=0;x<w;x++){mark(x,0);mark(x,h-1);}
+  for(let y=0;y<h;y++){mark(0,y);mark(w-1,y);}
+  for(let n=0;n<q.length;){
+    const x=q[n++], y=q[n++];
+    if(x>0) mark(x-1,y);
+    if(x+1<w) mark(x+1,y);
+    if(y>0) mark(x,y-1);
+    if(y+1<h) mark(x,y+1);
+  }
+  for(let i=0;i<cell.length;i++){
+    if(cell[i]===9){cell[i]=0; continue;}
+    cell[i]=luma(i*4)<WALL?1:2;
+  }
+  wallCache[key]={w,h,cell};
+  return wallCache[key];
+}
+
+function reachableMask(grid, cxPct, cyPct, rangeM, widthM){
+  const {w,h,cell}=grid;
+  const sx=Math.max(0,Math.min(w-1,Math.round(cxPct/100*w)));
+  const sy=Math.max(0,Math.min(h-1,Math.round(cyPct/100*h)));
+  const mpp=widthM/w;
+  const maxCells=Math.max(1, rangeM/mpp);
+  const maxR2=maxCells*maxCells;
+  const seen=new Uint8Array(w*h);
+  const reach=new Uint8Array(w*h);
+  if(cell[sy*w+sx]===1){
+    // Wio sits on a drawn wall line — start from nearest walkable pixel.
+    let found=false;
+    for(let r=1;r<8 && !found;r++){
+      for(let dy=-r;dy<=r && !found;dy++){
+        for(let dx=-r;dx<=r && !found;dx++){
+          const x=sx+dx, y=sy+dy;
+          if(x<0||y<0||x>=w||y>=h) continue;
+          if(cell[y*w+x]===2){ startFlood(x,y); found=true; }
+        }
+      }
+    }
+    if(!found) startFlood(sx,sy);
+  }else startFlood(sx,sy);
+  function startFlood(ox,oy){
+    const q=[ox,oy];
+    seen[oy*w+ox]=1;
+    for(let n=0;n<q.length;){
+      const x=q[n++], y=q[n++];
+      const dx=x-sx, dy=y-sy;
+      if(dx*dx+dy*dy>maxR2) continue;
+      if(cell[y*w+x]===1) continue;
+      reach[y*w+x]=1;
+      const nbs=[[x-1,y],[x+1,y],[x,y-1],[x,y+1]];
+      for(const [nx,ny] of nbs){
+        if(nx<0||ny<0||nx>=w||ny>=h) continue;
+        const i=ny*w+nx;
+        if(seen[i]||cell[i]===0||cell[i]===1) continue;
+        seen[i]=1;
+        q.push(nx,ny);
+      }
+    }
+  }
+  return {w,h,reach,sx,sy,maxCells};
+}
+
+function rayHit(grid, sx, sy, ang, maxCells){
+  const {w,h,cell}=grid;
+  const ca=Math.cos(ang), sa=Math.sin(ang);
+  let x=sx+0.5, y=sy+0.5;
+  for(let i=0;i<maxCells;i++){
+    x+=ca; y+=sa;
+    const ix=Math.round(x), iy=Math.round(y);
+    if(ix<0||iy<0||ix>=w||iy>=h) return i;
+    const c=cell[iy*w+ix];
+    if(c===0||c===1) return i;
+  }
+  return maxCells;
+}
+
+function updateRadar(open, activeMap){
+  radarTargets=[];
+  (open||[]).forEach(r=>{
+    const loc=locate(r);
+    if(!loc||!loc.map) return;
+    if(activeMap && loc.mapKey!==activeMap) return;
+    radarTargets.push({
+      loc,
+      color:COL_HEX[r.level]||COL_HEX.LOW,
+      range:loc.range||18,
+      selected:r.id===selected
+    });
+  });
+}
+
+function drawRadar(){
+  const wrap=document.getElementById("map");
+  const img=mapImgEl;
+  const cv=radarCanvas;
+  if(!wrap||!img||!cv) return;
+  const dpr=window.devicePixelRatio||1;
+  const W=wrap.clientWidth, H=wrap.clientHeight;
+  if(cv.width!==W*dpr || cv.height!==H*dpr){
+    cv.width=W*dpr; cv.height=H*dpr;
+    cv.style.width=W+"px"; cv.style.height=H+"px";
+  }
+  const ctx=cv.getContext("2d");
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,H);
+  if(!img.naturalWidth || !radarTargets.length) return;
+  const box=containRect(wrap, img);
+  let grid=null;
+  try{ grid=classifyFloor(img); }catch(e){ grid=null; }
+  radarTargets.forEach((t, idx)=>{
+    const cx=box.x + t.loc.x/100*box.w;
+    const cy=box.y + t.loc.y/100*box.h;
+    const widthM=t.loc.map.width_m||90;
+    const pxPerM=box.w/widthM;
+    const rad=t.range*pxPerM;
+    const color=t.color;
+    let mask=null;
+    if(grid){
+      mask=reachableMask(grid, t.loc.x, t.loc.y, t.range, widthM);
+      ctx.save();
+      ctx.globalAlpha=t.selected?0.28:0.16;
+      ctx.fillStyle=color;
+      const cw=box.w/mask.w, ch=box.h/mask.h;
+      for(let y=0;y<mask.h;y++){
+        for(let x=0;x<mask.w;x++){
+          if(!mask.reach[y*mask.w+x]) continue;
+          ctx.fillRect(box.x+x*cw, box.y+y*ch, cw+0.5, ch+0.5);
+        }
+      }
+      ctx.restore();
+    }else{
+      ctx.beginPath();
+      ctx.arc(cx,cy,rad,0,Math.PI*2);
+      ctx.fillStyle=color;
+      ctx.globalAlpha=t.selected?0.18:0.1;
+      ctx.fill();
+      ctx.globalAlpha=1;
+    }
+    ctx.beginPath();
+    ctx.arc(cx,cy,rad,0,Math.PI*2);
+    ctx.strokeStyle=color;
+    ctx.globalAlpha=0.7;
+    ctx.setLineDash([6,5]);
+    ctx.lineWidth=t.selected?2.2:1.4;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha=1;
+    const ang=radarAngle + idx*0.9;
+    let sweepLen=rad;
+    if(grid && mask){
+      const hit=rayHit(grid, mask.sx, mask.sy, ang, mask.maxCells);
+      sweepLen=hit*(box.w/grid.w);
+    }
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    ctx.lineTo(cx+Math.cos(ang)*sweepLen, cy+Math.sin(ang)*sweepLen);
+    ctx.strokeStyle=color;
+    ctx.lineWidth=2;
+    ctx.globalAlpha=0.9;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx,cy,sweepLen,ang-0.45,ang);
+    ctx.lineTo(cx,cy);
+    ctx.closePath();
+    ctx.fillStyle=color;
+    ctx.globalAlpha=0.2;
+    ctx.fill();
+    ctx.globalAlpha=1;
+    ctx.beginPath();
+    ctx.arc(cx,cy,5,0,Math.PI*2);
+    ctx.fillStyle=color;
+    ctx.fill();
+    ctx.strokeStyle="#fff";
+    ctx.lineWidth=1.5;
+    ctx.stroke();
+  });
+}
+
+function radarLoop(ts){
+  radarAngle=(ts/1800)%(Math.PI*2);
+  drawRadar();
+  radarRaf=requestAnimationFrame(radarLoop);
+}
+if(!radarRaf) radarRaf=requestAnimationFrame(radarLoop);
+window.addEventListener("resize", drawRadar);
 
 async function setStatus(id,status){
   const replyText=replyDrafts[id]||"";

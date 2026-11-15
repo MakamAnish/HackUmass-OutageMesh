@@ -34,7 +34,7 @@ nav a{color:var(--go)}
 <main>
 <nav><a href="/requests">My requests</a></nav>
 <h1>Send a help request</h1>
-<p class="s">No app needed. After you send, you will see status updates if responders acknowledge.</p>
+<p class="s">No app needed. Sending measures how far this phone is from the help-point Wio over Wi‑Fi, then radios the request.</p>
 <button id="sos" type="button">SOS</button>
 <p class="s">SOS is always high priority and alerts responders with sound and voice.</p>
 <label>What is the situation?</label>
@@ -72,12 +72,27 @@ $("cats").onclick=e=>{
   [...$("cats").children].forEach(x=>x.setAttribute("aria-pressed",x===b?"true":"false"));
 };
 $("text").oninput=()=>$("cnt").textContent=$("text").value.length+" / 60";
+async function measureRtt(){
+  const samples=[];
+  for(let i=0;i<6;i++){
+    const t0=performance.now();
+    try{
+      await fetch("/api/range",{cache:"no-store"});
+    }catch(e){
+      return null;
+    }
+    samples.push(performance.now()-t0);
+  }
+  samples.sort((a,b)=>a-b);
+  return samples[3];
+}
 async function submit(sos){
   const m=$("msg");
   $("go").disabled=true;
   $("sos").disabled=true;
   m.style.color="";
-  m.textContent=sos?"Sending SOS...":"Sending...";
+  m.textContent=sos?"Ranging to help point, then sending SOS...":"Ranging to help point, then sending...";
+  const rtt=await measureRtt();
   try{
     const r=await fetch("/send",{
       method:"POST",
@@ -87,7 +102,8 @@ async function submit(sos){
         category:sos?"SOS":cat,
         sos:sos,
         text:sos?($("text").value||"SOS"):$("text").value,
-        client_id:clientId()
+        client_id:clientId(),
+        rtt_ms:rtt
       })
     });
     let j={};

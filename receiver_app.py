@@ -90,11 +90,12 @@ def health():
 
 @app.post("/api/simulate")
 def simulate():
-    # Unique id each click — duplicates were ignored by SQLite PRIMARY KEY.
     global _sim_n
     _sim_n += 1
     mid = f"T{(_sim_n % 99999) or 1}"
-    row = ingest(f"{mid}|CC-1-X|MED|needs fridge for insulin", rssi=-55, snr=12.0)
+    ranges = (9.0, 16.0, 24.0, 31.0)
+    range_m = ranges[(_sim_n - 1) % len(ranges)]
+    row = ingest(f"{mid}|CC-1-X|MED|needs fridge for insulin|{range_m:.1f}", rssi=-55, snr=12.0)
     return jsonify({"ok": True, "id": mid, "stored": row is not None})
 
 

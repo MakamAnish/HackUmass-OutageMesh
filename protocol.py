@@ -34,14 +34,36 @@ def make_zone(building: str, floor: str, room: str | None) -> str:
     return zone
 
 
-def encode(msg_id: str, zone: str, category: str, text: str) -> str:
+def _range_field(range_m: float | None) -> str:
+    if range_m is None:
+        return ""
+    try:
+        value = float(range_m)
+    except (TypeError, ValueError):
+        return ""
+    if not (0 <= value <= 200):
+        raise ValueError(f"bad range: {value}")
+    return f"{value:.1f}"
+
+
+def encode(
+    msg_id: str,
+    zone: str,
+    category: str,
+    text: str,
+    range_m: float | None = None,
+) -> str:
     if not _ID_RE.match(msg_id):
         raise ValueError(f"bad id: {msg_id!r}")
     if not _ZONE_RE.match(zone):
         raise ValueError(f"bad zone: {zone!r}")
     if category not in CATEGORIES:
         raise ValueError(f"bad category: {category!r}")
-    payload = f"{msg_id}|{zone}|{category}|{sanitize(text)}"
+    extra = _range_field(range_m)
+    extra = f"|{extra}" if extra else ""
+    head = f"{msg_id}|{zone}|{category}|"
+    room = MAX_PAYLOAD - len(head.encode()) - len(extra.encode())
+    payload = head + sanitize(text)[: max(0, room)] + extra
     if len(payload.encode()) > MAX_PAYLOAD:
         raise ValueError(f"payload too long: {len(payload)} bytes")
     return payload
@@ -49,9 +71,18 @@ def encode(msg_id: str, zone: str, category: str, text: str) -> str:
 
 def decode(payload: str) -> dict:
     parts = payload.strip().split("|")
-    if len(parts) != 4:
-        raise ValueError(f"expected 4 fields, got {len(parts)}: {payload!r}")
-    msg_id, zone, category, text = parts
+    if len(parts) not in (4, 5):
+        raise ValueError(f"expected 4 or 5 fields, got {len(parts)}: {payload!r}")
+    msg_id, zone, category, text = parts[:4]
+    range_m = None
+    if len(parts) == 5 and parts[4] and "," not in parts[4]:
+        try:
+            range_m = float(parts[4])
+        except ValueError as e:
+            raise ValueError(f"bad range field: {parts[4]!r}") from e
+        if not (0 <= range_m <= 200):
+            raise ValueError(f"bad range: {range_m}")
+        range_m = round(range_m, 1)
     if not _ID_RE.match(msg_id):
         raise ValueError(f"bad id: {msg_id!r}")
     if not _ZONE_RE.match(zone):
@@ -68,6 +99,7 @@ def decode(payload: str) -> dict:
         "category": category,
         "text": sanitize(text),
         "sos": category == "SOS",
+        "range_m": range_m,
     }
 
 

@@ -3,6 +3,8 @@
     "CC-1": {
       "image": "CC-1.png",
       "label": "Campus Center — Floor 1",
+      "width_m": 90,
+      "height_m": 82,
       "rooms": {
         "HELP": {"x": 27, "y": 40, "label": "Help Desk"},
         "HW": {"x": 18, "y": 12, "label": "Hardware Table"},
@@ -20,6 +22,8 @@
     "CC-2": {
       "image": "CC-2.png",
       "label": "Campus Center — Floor 2",
+      "width_m": 90,
+      "height_m": 82,
       "rooms": {
         "N255": {"x": 22, "y": 12, "label": "N255 Male Sleeping"},
         "N251": {"x": 32, "y": 32, "label": "N251 Workshops"},
@@ -34,6 +38,8 @@
     "CC-3": {
       "image": "CC-3.png",
       "label": "Campus Center — Floor 3",
+      "width_m": 90,
+      "height_m": 82,
       "rooms": {
         "N311": {"x": 18, "y": 86, "label": "N311"},
         "S331": {"x": 62, "y": 48, "label": "S331 Meeting/Hacking"},

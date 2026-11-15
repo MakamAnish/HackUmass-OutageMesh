@@ -82,6 +82,15 @@ def test_ack_round_trip():
     assert decode_ack("A47|DUB-3-X|MED|hi") is None
 
 
+def test_range_round_trip():
+    payload = encode("A1", "CC-1-X", "MED", "help", range_m=12.4)
+    msg = decode(payload)
+    assert msg["range_m"] == 12.4
+    assert payload.endswith("|12.4")
+    assert decode(encode("A1", "CC-1-X", "MED", "help"))["range_m"] is None
+    assert len(payload.encode()) <= MAX_PAYLOAD
+
+
 def test_sos_round_trip():
     payload = encode("A1", "CC-1-X", "SOS", "help me")
     msg = decode(payload)

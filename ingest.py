@@ -36,6 +36,7 @@ def ingest(payload: str, rssi: int | None = None, snr: float | None = None) -> d
             "status": "new",
             "synced": 0,
             "sos": 1 if decoded.get("sos") else 0,
+            "range_m": decoded.get("range_m"),
         }
         return insert(row)
     except Exception as exc:  # pragma: no cover - defensive per contract

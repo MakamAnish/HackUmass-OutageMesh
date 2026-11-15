@@ -28,13 +28,16 @@ def init(db_path: str = DB_PATH) -> str:
           received_at TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'new',
           synced INTEGER NOT NULL DEFAULT 0,
-          sos INTEGER NOT NULL DEFAULT 0
+          sos INTEGER NOT NULL DEFAULT 0,
+          range_m REAL
         )
         """
     )
     cols = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
     if "sos" not in cols:
         conn.execute("ALTER TABLE messages ADD COLUMN sos INTEGER NOT NULL DEFAULT 0")
+    if "range_m" not in cols:
+        conn.execute("ALTER TABLE messages ADD COLUMN range_m REAL")
     conn.commit()
     conn.close()
     return db_path
@@ -71,6 +74,7 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
         "status": row.get("status") or "new",
         "synced": int(row.get("synced") or 0),
         "sos": 1 if row.get("sos") or row.get("category") == "SOS" else 0,
+        "range_m": row.get("range_m"),
     }
     if not prepared["id"]:
         return None
@@ -81,8 +85,8 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
             INSERT OR IGNORE INTO messages (
               id, zone, building, floor, room, category, text, level, kw_score,
               kw_reasons, ai_level, ai_reason, rssi, snr, received_at, status, synced,
-              sos
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              sos, range_m
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 prepared["id"],
@@ -103,6 +107,7 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
                 prepared["status"],
                 prepared["synced"],
                 prepared["sos"],
+                prepared["range_m"],
             ),
         )
         conn.commit()
@@ -122,7 +127,6 @@ def list_messages(since: str | None = None, db_path: str = DB_PATH):
         if since:
             query += " WHERE received_at >= ?"
             params.append(since)
-        # Open items first, then urgency (HIGH > MEDIUM > LOW), then newest.
         query += """
           ORDER BY
             CASE status WHEN 'resolved' THEN 1 ELSE 0 END,

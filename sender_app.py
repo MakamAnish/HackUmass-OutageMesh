@@ -10,6 +10,7 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 import outgoing
 import radio_worker
 from protocol import CATEGORIES, decode_ack, decode_done, encode, make_zone, next_id, sanitize
+from ranging import estimate_range_m
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
@@ -75,10 +76,12 @@ def send():
     if category not in CATEGORIES:
         category = "OTHER"
 
+    range_m = estimate_range_m(payload.get("rtt_ms"))
+
     try:
         zone = make_zone(BUILDING, floor, room)
         msg_id = next_id(NODE_ID)
-        packet = encode(msg_id, zone, category, text)
+        packet = encode(msg_id, zone, category, text, range_m=range_m)
         ok = radio_worker.send(packet)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -103,9 +106,16 @@ def send():
             "id": msg_id,
             "zone": zone,
             "payload": packet,
+            "range_m": range_m,
             "redirect": url_for("requests_page") + f"?focus={msg_id}",
         }
     )
+
+
+@app.get("/api/range")
+def api_range():
+    """Tiny ping so the phone can measure Wi-Fi round-trip to this help-point Wio."""
+    return jsonify({"ok": True})
 
 
 @app.get("/api/my-requests")
