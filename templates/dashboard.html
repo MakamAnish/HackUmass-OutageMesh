@@ -483,7 +483,7 @@ function makeCard(r){
   const level=r.level||"LOW";
   const loc=locate(r);
   const sos=!!(r.sos||r.category==="SOS");
-  const showAlarm=sos && r.status!=="resolved" && !alarmDismissed && !mutedIds.has(sosId(r));
+  const showAlarm=sos && r.status!=="resolved" && ringing.has(sosId(r));
   const d=el("div","m"+(sos?" sos":"")+(showAlarm?" has-alarm":"")+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
   d.style.setProperty("--c",COL[level]||COL.LOW);
   d.onclick=()=>{selected=r.id;viewMap=null;showMapFor(r);renderList(rowsCache);renderPins(rowsCache);renderFloorTabs();};
@@ -605,22 +605,18 @@ async function load(force){
   first=false;
 }
 
-let audioCtx=null, alarmTimer=null, alarmGen=0, alarmOn=false, alarmDismissed=false, announced=new Set(), mutedIds=new Set();
+let audioCtx=null, alarmTimer=null, alarmGen=0, alarmOn=false, announced=new Set(), ringing=new Set();
 function sosId(r){return String(r&&r.id||"").toUpperCase()}
 function openSos(rows){return (rows||[]).filter(r=>(r.sos||r.category==="SOS") && r.status!=="resolved")}
-function hideAlarmButtons(){
-  document.querySelectorAll(".sos-alarm").forEach(b=>{
-    const card=b.closest(".m");
-    b.remove();
-    if(card) card.classList.remove("has-alarm");
-  });
-}
 function chokeSpeech(){
   if(!window.speechSynthesis) return;
-  try{speechSynthesis.cancel();}catch(e){}
   try{speechSynthesis.pause();}catch(e){}
-  requestAnimationFrame(()=>{try{speechSynthesis.cancel();}catch(e){}});
-  setTimeout(()=>{try{if(!alarmOn) speechSynthesis.cancel();}catch(e){}}, 50);
+  try{speechSynthesis.cancel();}catch(e){}
+  try{
+    const u=new SpeechSynthesisUtterance("");
+    speechSynthesis.speak(u);
+    speechSynthesis.cancel();
+  }catch(e){}
 }
 function stopAlarm(){
   alarmOn=false;
@@ -635,29 +631,33 @@ function stopAlarm(){
   }
 }
 function startAlarmSound(){
-  if(alarmDismissed) return;
+  if(!ringing.size){stopAlarm();return;}
+  if(alarmTimer) return;
   alarmOn=true;
-  if(!alarmTimer) alarmTimer=setInterval(beep, 700);
+  alarmTimer=setInterval(beep, 700);
   beep();
+  speakSos();
 }
 function dismissAlarm(e,r,btn){
   e.preventDefault();
   e.stopPropagation();
   if(e.stopImmediatePropagation) e.stopImmediatePropagation();
-  alarmDismissed=true;
-  openSos(rowsCache).forEach(x=>mutedIds.add(sosId(x)));
-  if(r) mutedIds.add(sosId(r));
-  hideAlarmButtons();
-  stopAlarm();
+  ringing.delete(sosId(r));
+  if(btn){
+    const card=btn.closest(".m");
+    btn.remove();
+    if(card) card.classList.remove("has-alarm");
+  }
+  if(!ringing.size) stopAlarm();
 }
 function beep(){
-  if(!alarmOn || alarmDismissed) return;
+  if(!alarmOn || !ringing.size) return;
   const gen=alarmGen;
   try{
     if(!audioCtx || audioCtx.state==="closed") audioCtx=new (window.AudioContext||window.webkitAudioContext)();
     const ctx=audioCtx;
     const play=()=>{
-      if(!alarmOn || alarmDismissed || gen!==alarmGen || audioCtx!==ctx || ctx.state==="closed") return;
+      if(!alarmOn || !ringing.size || gen!==alarmGen || audioCtx!==ctx || ctx.state==="closed") return;
       const o=ctx.createOscillator();
       const g=ctx.createGain();
       o.type="square";
@@ -672,38 +672,41 @@ function beep(){
   }catch(e){}
 }
 function speakSos(){
-  if(!alarmOn || alarmDismissed || !window.speechSynthesis) return;
-  try{speechSynthesis.cancel();}catch(e){}
+  if(!alarmOn || !ringing.size || !window.speechSynthesis) return;
+  chokeSpeech();
   const u=new SpeechSynthesisUtterance("SOS. Emergency help request.");
   u.rate=1;
-  u.onstart=()=>{if(!alarmOn || alarmDismissed) chokeSpeech();};
+  u.onstart=()=>{if(!alarmOn || !ringing.size) chokeSpeech();};
   speechSynthesis.speak(u);
 }
 function syncAlarm(rows){
   const open=openSos(rows);
+  const openIds=new Set(open.map(sosId));
+  [...ringing].forEach(id=>{if(!openIds.has(id)) ringing.delete(id);});
   const banner=document.getElementById("sosBanner");
   banner.hidden=!open.length;
   banner.textContent=open.length?("SOS — "+open.length+" open emergency request"+(open.length>1?"s":"")):"SOS";
   if(!open.length){
-    alarmDismissed=false;
-    mutedIds.clear();
+    ringing.clear();
     stopAlarm();
     return;
   }
   const fresh=open.filter(r=>!announced.has(sosId(r)));
-  fresh.forEach(r=>announced.add(sosId(r)));
   if(fresh.length){
-    alarmDismissed=false;
-    fresh.forEach(r=>mutedIds.delete(sosId(r)));
+    stopAlarm();
+    fresh.forEach(r=>{
+      announced.add(sosId(r));
+      ringing.add(sosId(r));
+    });
     renderList(rowsCache);
-    alarmOn=true;
-    fresh.forEach(()=>speakSos());
+    startAlarmSound();
+    return;
   }
-  if(alarmDismissed){stopAlarm();hideAlarmButtons();return;}
-  startAlarmSound();
+  if(!ringing.size) stopAlarm();
+  else startAlarmSound();
 }
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
-document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();mutedIds=new Set();stopAlarm();await load(true);}};
+document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();ringing=new Set();stopAlarm();await load(true);}};
 load(true);
 setInterval(()=>load(false),2000);
 </script>
