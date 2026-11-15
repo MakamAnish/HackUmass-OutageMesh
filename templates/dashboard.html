@@ -483,7 +483,7 @@ function makeCard(r){
   const level=r.level||"LOW";
   const loc=locate(r);
   const sos=!!(r.sos||r.category==="SOS");
-  const showAlarm=sos && r.status!=="resolved" && !mutedIds.has(sosId(r));
+  const showAlarm=sos && r.status!=="resolved" && !alarmDismissed && !mutedIds.has(sosId(r));
   const d=el("div","m"+(sos?" sos":"")+(showAlarm?" has-alarm":"")+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
   d.style.setProperty("--c",COL[level]||COL.LOW);
   d.onclick=()=>{selected=r.id;viewMap=null;showMapFor(r);renderList(rowsCache);renderPins(rowsCache);renderFloorTabs();};
@@ -605,31 +605,38 @@ async function load(force){
   first=false;
 }
 
-let audioCtx=null, alarmTimer=null, alarmGen=0, announced=new Set(), mutedIds=new Set();
+let audioCtx=null, alarmTimer=null, alarmGen=0, alarmOn=false, alarmDismissed=false, announced=new Set(), mutedIds=new Set();
 function sosId(r){return String(r&&r.id||"").toUpperCase()}
 function openSos(rows){return (rows||[]).filter(r=>(r.sos||r.category==="SOS") && r.status!=="resolved")}
-function alarmSilenced(){
-  const open=openSos(rowsCache);
-  return !open.length || open.every(r=>mutedIds.has(sosId(r)));
+function hideAlarmButtons(){
+  document.querySelectorAll(".sos-alarm").forEach(b=>{
+    const card=b.closest(".m");
+    b.remove();
+    if(card) card.classList.remove("has-alarm");
+  });
 }
 function chokeSpeech(){
   if(!window.speechSynthesis) return;
   try{speechSynthesis.cancel();}catch(e){}
-  requestAnimationFrame(()=>{try{if(alarmSilenced()) speechSynthesis.cancel();}catch(e){}});
-  setTimeout(()=>{try{if(alarmSilenced()) speechSynthesis.cancel();}catch(e){}}, 50);
+  try{speechSynthesis.pause();}catch(e){}
+  requestAnimationFrame(()=>{try{speechSynthesis.cancel();}catch(e){}});
+  setTimeout(()=>{try{if(!alarmOn) speechSynthesis.cancel();}catch(e){}}, 50);
 }
 function stopAlarm(){
+  alarmOn=false;
   alarmGen++;
   if(alarmTimer){clearInterval(alarmTimer);alarmTimer=null;}
   chokeSpeech();
   if(audioCtx){
     const ctx=audioCtx;
     audioCtx=null;
+    try{ctx.suspend();}catch(e){}
     try{ctx.close();}catch(e){}
   }
 }
 function startAlarmSound(){
-  if(alarmSilenced()) return;
+  if(alarmDismissed) return;
+  alarmOn=true;
   if(!alarmTimer) alarmTimer=setInterval(beep, 700);
   beep();
 }
@@ -637,22 +644,20 @@ function dismissAlarm(e,r,btn){
   e.preventDefault();
   e.stopPropagation();
   if(e.stopImmediatePropagation) e.stopImmediatePropagation();
-  mutedIds.add(sosId(r));
-  if(btn){
-    const card=btn.closest(".m");
-    btn.remove();
-    if(card) card.classList.remove("has-alarm");
-  }
-  if(alarmSilenced()) stopAlarm();
+  alarmDismissed=true;
+  openSos(rowsCache).forEach(x=>mutedIds.add(sosId(x)));
+  if(r) mutedIds.add(sosId(r));
+  hideAlarmButtons();
+  stopAlarm();
 }
 function beep(){
-  if(alarmSilenced()) return;
+  if(!alarmOn || alarmDismissed) return;
   const gen=alarmGen;
   try{
     if(!audioCtx || audioCtx.state==="closed") audioCtx=new (window.AudioContext||window.webkitAudioContext)();
     const ctx=audioCtx;
     const play=()=>{
-      if(alarmSilenced() || gen!==alarmGen || audioCtx!==ctx || ctx.state==="closed") return;
+      if(!alarmOn || alarmDismissed || gen!==alarmGen || audioCtx!==ctx || ctx.state==="closed") return;
       const o=ctx.createOscillator();
       const g=ctx.createGain();
       o.type="square";
@@ -667,11 +672,11 @@ function beep(){
   }catch(e){}
 }
 function speakSos(){
-  if(alarmSilenced() || !window.speechSynthesis) return;
+  if(!alarmOn || alarmDismissed || !window.speechSynthesis) return;
   try{speechSynthesis.cancel();}catch(e){}
   const u=new SpeechSynthesisUtterance("SOS. Emergency help request.");
   u.rate=1;
-  u.onstart=()=>{if(alarmSilenced()) chokeSpeech();};
+  u.onstart=()=>{if(!alarmOn || alarmDismissed) chokeSpeech();};
   speechSynthesis.speak(u);
 }
 function syncAlarm(rows){
@@ -680,20 +685,21 @@ function syncAlarm(rows){
   banner.hidden=!open.length;
   banner.textContent=open.length?("SOS — "+open.length+" open emergency request"+(open.length>1?"s":"")):"SOS";
   if(!open.length){
+    alarmDismissed=false;
     mutedIds.clear();
     stopAlarm();
     return;
   }
   const fresh=open.filter(r=>!announced.has(sosId(r)));
-  fresh.forEach(r=>{
-    announced.add(sosId(r));
-    mutedIds.delete(sosId(r));
-  });
+  fresh.forEach(r=>announced.add(sosId(r)));
   if(fresh.length){
-    fresh.forEach(()=>speakSos());
+    alarmDismissed=false;
+    fresh.forEach(r=>mutedIds.delete(sosId(r)));
     renderList(rowsCache);
+    alarmOn=true;
+    fresh.forEach(()=>speakSos());
   }
-  if(alarmSilenced()){stopAlarm();return;}
+  if(alarmDismissed){stopAlarm();hideAlarmButtons();return;}
   startAlarmSound();
 }
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
