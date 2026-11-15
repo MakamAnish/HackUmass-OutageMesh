@@ -21,11 +21,7 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
 .tools button:hover,.floors button:hover,.act button:hover{filter:brightness(1.08);transform:translateY(-1px)}
 .tools #sim{background:var(--teal);border-color:var(--teal);color:#052d2a}
 .tools #clr{background:transparent;color:#d4deea}
-#sosBanner{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem;padding:.8rem clamp(1rem,3vw,2.5rem);background:#c3323e;color:#fff;font-weight:750;letter-spacing:.01em}
-#sosBanner[hidden]{display:none}
-#sosSummary{flex:1}
-#sosAlarmBtn{font:750 .82rem system-ui,sans-serif;padding:.5rem .85rem;border:1px solid rgba(255,255,255,.55);border-radius:.7rem;background:#fff;color:#9e202c}
-#sosAlarmBtn:hover{filter:brightness(.94)}
+#sosBanner{padding:.8rem clamp(1rem,3vw,2.5rem);background:#c3323e;color:#fff;font-weight:750;letter-spacing:.01em}
 .layout{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:1.25rem;max-width:90rem;margin:0 auto;padding:1.4rem clamp(1rem,3vw,2.5rem)}
 @media(max-width:900px){.layout{grid-template-columns:1fr}}
 .map-panel{align-self:start;background:var(--surface);border:1px solid var(--line);border-radius:1rem;padding:1rem;box-shadow:var(--shadow)}
@@ -80,14 +76,12 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
     </div>
   </div>
   <div class="tools">
+    <button id="alarmBtn" type="button">Alarm on</button>
     <button id="sim" type="button">Simulate message</button>
     <button id="clr" type="button">Clear all</button>
   </div>
 </header>
-<div id="sosBanner" hidden>
-  <span id="sosSummary"></span>
-  <button id="sosAlarmBtn" type="button" aria-pressed="true">Mute all SOS alarms</button>
-</div>
+<div id="sosBanner" hidden>SOS — open emergency on the map</div>
 <div class="layout">
   <section class="map-panel">
     <h2>Location map</h2>
@@ -598,76 +592,55 @@ async function load(force){
   first=false;
 }
 
-let alarmCtx=null, alarmTimer=null, heardSos=new Set(), alarmEnabled=true, openSosIds=new Set();
-function sosId(r){return String(r&&r.id||"").toUpperCase()}
-function openSos(rows){return (rows||[]).filter(r=>(r.sos||r.category==="SOS") && r.status!=="resolved")}
-function stopSound(){
+let alarmMuted=false, audioCtx=null, alarmTimer=null, announced=new Set();
+function stopAlarm(){
   if(alarmTimer){clearInterval(alarmTimer);alarmTimer=null;}
-  if(window.speechSynthesis){try{speechSynthesis.cancel();}catch(e){}}
-  if(alarmCtx){
-    const ctx=alarmCtx;
-    alarmCtx=null;
-    try{ctx.close();}catch(e){}
-  }
+  if(audioCtx){try{audioCtx.suspend();}catch(e){}}
 }
 function beep(){
-  if(!alarmEnabled || !openSosIds.size || !alarmCtx) return;
+  if(alarmMuted) return;
   try{
-    const ctx=alarmCtx;
-    if(ctx.state==="closed") return;
-    const o=ctx.createOscillator();
-    const g=ctx.createGain();
+    if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==="suspended") audioCtx.resume();
+    const o=audioCtx.createOscillator();
+    const g=audioCtx.createGain();
     o.type="square";
     o.frequency.value=880;
     g.gain.value=0.08;
-    o.connect(g); g.connect(ctx.destination);
+    o.connect(g); g.connect(audioCtx.destination);
     o.start();
-    o.stop(ctx.currentTime+0.25);
+    o.stop(audioCtx.currentTime+0.25);
   }catch(e){}
 }
-function startAlarm(announce=false){
-  if(!alarmEnabled || !openSosIds.size) return;
-  const AC=window.AudioContext||window.webkitAudioContext;
-  if(AC && (!alarmCtx || alarmCtx.state==="closed")){
-    try{alarmCtx=new AC()}catch(e){alarmCtx=null}
-  }
-  if(alarmCtx){
-    if(!alarmTimer) alarmTimer=setInterval(beep,700);
-    if(alarmCtx.state==="suspended") alarmCtx.resume().then(beep).catch(()=>{});
-    else beep();
-  }
-  if(announce && window.speechSynthesis){
-    try{
-      const u=new SpeechSynthesisUtterance("SOS. Emergency help request.");
-      speechSynthesis.speak(u);
-    }catch(e){}
-  }
+function speakSos(){
+  if(alarmMuted || !window.speechSynthesis) return;
+  const u=new SpeechSynthesisUtterance("SOS. Emergency help request.");
+  u.rate=1;
+  speechSynthesis.speak(u);
 }
 function syncAlarm(rows){
-  const open=openSos(rows);
+  const open=(rows||[]).filter(r=>(r.sos||r.category==="SOS") && r.status!=="resolved");
   const banner=document.getElementById("sosBanner");
   banner.hidden=!open.length;
-  document.getElementById("sosSummary").textContent=
-    open.length?"SOS — "+open.length+" open emergency request"+(open.length>1?"s":""):"";
-  const alarmButton=document.getElementById("sosAlarmBtn");
-  alarmButton.textContent=alarmEnabled?"Mute all SOS alarms":"Enable SOS alarms";
-  alarmButton.setAttribute("aria-pressed",alarmEnabled?"true":"false");
-  openSosIds=new Set(open.map(sosId));
-  const fresh=open.filter(r=>!heardSos.has(sosId(r)));
-  fresh.forEach(r=>{
-    heardSos.add(sosId(r));
+  banner.textContent=open.length?("SOS — "+open.length+" open emergency request"+(open.length>1?"s":"")):"SOS";
+  if(!open.length){stopAlarm();return;}
+  open.forEach(r=>{
+    if(!announced.has(r.id)){
+      announced.add(r.id);
+      speakSos();
+    }
   });
-  if(!alarmEnabled || !open.length){stopSound();return}
-  if(fresh.length || !alarmTimer) startAlarm(fresh.length>0);
+  if(alarmMuted){stopAlarm();return;}
+  if(!alarmTimer) alarmTimer=setInterval(beep,700);
 }
-document.getElementById("sosAlarmBtn").onclick=()=>{
-  alarmEnabled=!alarmEnabled;
-  if(alarmEnabled) startAlarm(true);
-  else stopSound();
-  syncAlarm(rowsCache);
+document.getElementById("alarmBtn").onclick=()=>{
+  alarmMuted=!alarmMuted;
+  document.getElementById("alarmBtn").textContent=alarmMuted?"Alarm off":"Alarm on";
+  if(alarmMuted){stopAlarm();if(window.speechSynthesis)speechSynthesis.cancel();}
+  else syncAlarm(rowsCache);
 };
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
-document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;heardSos=new Set();openSosIds=new Set();stopSound();await load(true);}};
+document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();stopAlarm();await load(true);}};
 load(true);
 setInterval(()=>load(false),2000);
 </script>
