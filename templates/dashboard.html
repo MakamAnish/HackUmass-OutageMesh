@@ -43,7 +43,9 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
 .sec:first-child{margin-top:.1rem}
 .sec::before{content:"";width:.55rem;height:.55rem;border-radius:50%;background:var(--mute)}
 .sec.high::before{background:var(--high)}.sec.medium::before{background:var(--med)}.sec.low::before{background:var(--low)}
-.m{display:grid;grid-template-columns:5.2rem minmax(0,1fr) minmax(10rem,12rem);gap:1rem;align-items:start;background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--c);border-radius:.95rem;padding:1rem;margin-bottom:.7rem;box-shadow:0 4px 14px rgba(24,43,69,.045);cursor:pointer;transition:transform .15s ease,box-shadow .15s ease}
+.m{position:relative;display:grid;grid-template-columns:5.2rem minmax(0,1fr) minmax(10rem,12rem);gap:1rem;align-items:start;background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--c);border-radius:.95rem;padding:1rem;margin-bottom:.7rem;box-shadow:0 4px 14px rgba(24,43,69,.045);cursor:pointer;transition:transform .15s ease,box-shadow .15s ease}
+.m.sos{padding-bottom:2.7rem}
+.sos-alarm{position:absolute;left:.85rem;bottom:.65rem;font:750 .74rem system-ui,sans-serif;padding:.4rem .7rem;border-radius:.65rem;border:1px solid color-mix(in srgb,var(--high) 42%,var(--line));background:color-mix(in srgb,var(--high) 12%,var(--surface));color:var(--high)}
 .m:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
 .m.selected{outline:2px solid color-mix(in srgb,var(--blue) 65%,transparent);outline-offset:1px}
 .m.resolved{opacity:.62}
@@ -58,7 +60,7 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
 .act button.on-way{border-color:color-mix(in srgb,var(--teal) 40%,var(--line));background:color-mix(in srgb,var(--teal) 11%,var(--surface));color:var(--teal)}
 .act button.resolve{background:var(--navy);border-color:var(--navy);color:#fff}
 .empty{color:var(--mute);padding:2rem;text-align:center;background:var(--surface);border:1px dashed var(--line);border-radius:1rem}
-@media(max-width:560px){header{align-items:flex-start}.tools{width:100%}.tools button{flex:1}.m{grid-template-columns:4.6rem minmax(0,1fr)}.act{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.act input{grid-column:1/-1}.act button{padding:.6rem .35rem;font-size:.74rem}}
+@media(max-width:560px){header{align-items:flex-start}.tools{width:100%}.tools button{flex:1}.m{grid-template-columns:4.6rem minmax(0,1fr)}.m.sos{padding-bottom:3.2rem}.act{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.act input{grid-column:1/-1}.act button{padding:.6rem .35rem;font-size:.74rem}}
 @media(max-width:380px){.act{grid-template-columns:1fr}.act input{grid-column:auto}}
 @keyframes flash{from{background:color-mix(in srgb,var(--c) 24%,var(--surface))}}
 .m.fresh{animation:flash 1.5s}
@@ -76,7 +78,6 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
     </div>
   </div>
   <div class="tools">
-    <button id="alarmBtn" type="button">Alarm on</button>
     <button id="sim" type="button">Simulate message</button>
     <button id="clr" type="button">Clear all</button>
   </div>
@@ -481,7 +482,8 @@ async function setStatus(id,status){
 function makeCard(r){
   const level=r.level||"LOW";
   const loc=locate(r);
-  const d=el("div","m"+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
+  const sos=!!(r.sos||r.category==="SOS");
+  const d=el("div","m"+(sos?" sos":"")+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
   d.style.setProperty("--c",COL[level]||COL.LOW);
   d.onclick=()=>{selected=r.id;viewMap=null;showMapFor(r);renderList(rowsCache);renderPins(rowsCache);renderFloorTabs();};
   const u=el("div","u",level);
@@ -526,6 +528,18 @@ function makeCard(r){
     a.append(b);
   }
   d.append(u,mid,a);
+  if(sos && r.status!=="resolved"){
+    const alarm=el("button","sos-alarm",alarmMuted?"Alarm off":"Alarm on");
+    alarm.type="button";
+    alarm.onclick=e=>{
+      e.stopPropagation();
+      alarmMuted=!alarmMuted;
+      document.querySelectorAll(".sos-alarm").forEach(b=>b.textContent=alarmMuted?"Alarm off":"Alarm on");
+      if(alarmMuted){stopAlarm(); if(window.speechSynthesis) speechSynthesis.cancel();}
+      else syncAlarm(rowsCache);
+    };
+    d.append(alarm);
+  }
   seen.add(r.id);
   return d;
 }
@@ -621,12 +635,6 @@ function syncAlarm(rows){
   if(alarmMuted){stopAlarm();return;}
   if(!alarmTimer) alarmTimer=setInterval(beep, 700);
 }
-document.getElementById("alarmBtn").onclick=()=>{
-  alarmMuted=!alarmMuted;
-  document.getElementById("alarmBtn").textContent=alarmMuted?"Alarm off":"Alarm on";
-  if(alarmMuted){stopAlarm(); if(window.speechSynthesis) speechSynthesis.cancel();}
-  else syncAlarm(rowsCache);
-};
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
 document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();stopAlarm();await load(true);}};
 load(true);

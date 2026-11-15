@@ -54,9 +54,9 @@
       "building": "CC",
       "floor": "1",
       "map": "CC-1",
-      "x": 27,
-      "y": 40,
-      "label": "Help point A — Help Desk (Floor 1)"
+      "x": 58,
+      "y": 88,
+      "label": "Help point A — S120 Workshop/Hacking (Floor 1)"
     },
     "B": {
       "building": "CC",
