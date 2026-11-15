@@ -95,8 +95,6 @@ def test_receiver_status_route_enqueues_ack_without_sending_in_request(monkeypat
     assert b"Alarm on" in dashboard.data
     assert b"sosAlarmBtn" not in dashboard.data
     assert b"sos-alarm" not in dashboard.data
-    assert b"Tap or click anywhere to enable sound alerts" in dashboard.data
-    assert b'document.addEventListener("pointerdown",unlockAudio,true)' in dashboard.data
     assert b"https://" not in dashboard.data
 
 

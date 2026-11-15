@@ -16,8 +16,6 @@ header{display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:s
 h1{font-size:1.35rem;letter-spacing:-.025em;margin:.05rem 0}
 #stats{color:#c1cedc;font-size:.82rem}
 .tools{display:flex;flex-wrap:wrap;gap:.55rem}
-.audio-hint{align-self:center;color:#c1cedc;font-size:.75rem}
-.audio-hint[hidden]{display:none}
 button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ease,border-color .15s ease}
 .tools button,.floors button{border:1px solid #52647a;border-radius:.7rem;padding:.58rem .85rem;color:#eff5fc;background:#20354e;font-weight:650}
 .tools button:hover,.floors button:hover,.act button:hover{filter:brightness(1.08);transform:translateY(-1px)}
@@ -79,7 +77,6 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
   </div>
   <div class="tools">
     <button id="alarmBtn" type="button">Alarm on</button>
-    <span id="audioHint" class="audio-hint" role="status">Tap or click anywhere to enable sound alerts</span>
     <button id="sim" type="button">Simulate message</button>
     <button id="clr" type="button">Clear all</button>
   </div>
@@ -595,38 +592,16 @@ async function load(force){
   first=false;
 }
 
-let alarmMuted=false, audioCtx=null, audioUnlocked=false, pendingSpeech=false, alarmTimer=null, announced=new Set();
-function unlockAudio(){
-  const AudioContextClass=window.AudioContext||window.webkitAudioContext;
-  if(!AudioContextClass){
-    document.getElementById("audioHint").textContent="Audio is unavailable in this browser";
-    return;
-  }
-  try{
-    if(!audioCtx) audioCtx=new AudioContextClass();
-    const ready=()=>{
-      if(audioCtx.state!=="running") return;
-      audioUnlocked=true;
-      document.getElementById("audioHint").hidden=true;
-      if(alarmTimer) beep();
-      if(pendingSpeech && !alarmMuted){
-        pendingSpeech=false;
-        speakSos();
-      }
-    };
-    if(audioCtx.state==="suspended") audioCtx.resume().then(ready).catch(error=>console.warn("Could not enable dashboard audio",error));
-    else ready();
-  }catch(error){
-    console.warn("Could not enable dashboard audio",error);
-  }
-}
+let alarmMuted=false, audioCtx=null, alarmTimer=null, announced=new Set();
 function stopAlarm(){
   if(alarmTimer){clearInterval(alarmTimer);alarmTimer=null;}
   if(audioCtx){try{audioCtx.suspend();}catch(e){}}
 }
 function beep(){
-  if(alarmMuted || !audioUnlocked || !audioCtx || audioCtx.state!=="running") return;
+  if(alarmMuted) return;
   try{
+    if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==="suspended") audioCtx.resume();
     const o=audioCtx.createOscillator();
     const g=audioCtx.createGain();
     o.type="square";
@@ -639,7 +614,6 @@ function beep(){
 }
 function speakSos(){
   if(alarmMuted || !window.speechSynthesis) return;
-  if(!audioUnlocked){pendingSpeech=true;return;}
   const u=new SpeechSynthesisUtterance("SOS. Emergency help request.");
   u.rate=1;
   speechSynthesis.speak(u);
@@ -657,29 +631,14 @@ function syncAlarm(rows){
     }
   });
   if(alarmMuted){stopAlarm();return;}
-  if(!alarmTimer){
-    alarmTimer=setInterval(beep,700);
-    if(audioUnlocked && audioCtx && audioCtx.state==="suspended"){
-      audioCtx.resume().then(beep).catch(error=>console.warn("Could not resume dashboard audio",error));
-    }else{
-      beep();
-    }
-  }
+  if(!alarmTimer) alarmTimer=setInterval(beep,700);
 }
 document.getElementById("alarmBtn").onclick=()=>{
   alarmMuted=!alarmMuted;
   document.getElementById("alarmBtn").textContent=alarmMuted?"Alarm off":"Alarm on";
-  if(alarmMuted){
-    pendingSpeech=false;
-    stopAlarm();
-    if(window.speechSynthesis)speechSynthesis.cancel();
-  }else{
-    unlockAudio();
-    syncAlarm(rowsCache);
-  }
+  if(alarmMuted){stopAlarm();if(window.speechSynthesis)speechSynthesis.cancel();}
+  else syncAlarm(rowsCache);
 };
-document.addEventListener("pointerdown",unlockAudio,true);
-document.addEventListener("keydown",unlockAudio,true);
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
 document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();stopAlarm();await load(true);}};
 load(true);
