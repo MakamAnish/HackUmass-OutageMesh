@@ -23,6 +23,10 @@ def init(db_path: str = DB_PATH) -> str:
           kw_reasons TEXT,
           ai_level TEXT,
           ai_reason TEXT,
+          ai_urgency INTEGER,
+          ai_summary TEXT,
+          ai_people_affected INTEGER,
+          ai_status TEXT NOT NULL DEFAULT 'offline',
           rssi INTEGER,
           snr REAL,
           received_at TEXT NOT NULL,
@@ -33,8 +37,17 @@ def init(db_path: str = DB_PATH) -> str:
         """
     )
     cols = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
-    if "sos" not in cols:
-        conn.execute("ALTER TABLE messages ADD COLUMN sos INTEGER NOT NULL DEFAULT 0")
+    migrations = {
+        "ai_reason": "TEXT",
+        "ai_urgency": "INTEGER",
+        "ai_summary": "TEXT",
+        "ai_people_affected": "INTEGER",
+        "ai_status": "TEXT NOT NULL DEFAULT 'offline'",
+        "sos": "INTEGER NOT NULL DEFAULT 0",
+    }
+    for column, definition in migrations.items():
+        if column not in cols:
+            conn.execute(f"ALTER TABLE messages ADD COLUMN {column} {definition}")
     conn.commit()
     conn.close()
     return db_path
@@ -65,6 +78,10 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
         "kw_reasons": row.get("kw_reasons"),
         "ai_level": row.get("ai_level"),
         "ai_reason": row.get("ai_reason"),
+        "ai_urgency": row.get("ai_urgency"),
+        "ai_summary": row.get("ai_summary"),
+        "ai_people_affected": row.get("ai_people_affected"),
+        "ai_status": row.get("ai_status") or "offline",
         "rssi": row.get("rssi"),
         "snr": row.get("snr"),
         "received_at": row.get("received_at") or datetime.now(timezone.utc).isoformat(),
@@ -76,13 +93,14 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
         return None
     conn = _connect(db_path)
     try:
-        conn.execute(
+        inserted = conn.execute(
             """
             INSERT OR IGNORE INTO messages (
               id, zone, building, floor, room, category, text, level, kw_score,
-              kw_reasons, ai_level, ai_reason, rssi, snr, received_at, status, synced,
+              kw_reasons, ai_level, ai_reason, ai_urgency, ai_summary,
+              ai_people_affected, ai_status, rssi, snr, received_at, status, synced,
               sos
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 prepared["id"],
@@ -97,6 +115,10 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
                 prepared["kw_reasons"],
                 prepared["ai_level"],
                 prepared["ai_reason"],
+                prepared["ai_urgency"],
+                prepared["ai_summary"],
+                prepared["ai_people_affected"],
+                prepared["ai_status"],
                 prepared["rssi"],
                 prepared["snr"],
                 prepared["received_at"],
@@ -106,11 +128,76 @@ def insert(row: dict[str, Any], db_path: str = DB_PATH) -> dict | None:
             ),
         )
         conn.commit()
+        if inserted.rowcount == 0:
+            return None
         cur = conn.execute("SELECT * FROM messages WHERE id = ?", (prepared["id"],))
         stored = dict(cur.fetchone() or {})
     finally:
         conn.close()
     return stored
+
+
+def update_ai_result(msg_id: str, result: dict, db_path: str = DB_PATH) -> bool:
+    """Store one validated AI result and apply it above the keyword safety floor."""
+    from triage import final_level
+
+    conn = _connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT kw_score FROM messages WHERE id = ? AND ai_status = 'pending'",
+            (msg_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        urgency = result["urgency"]
+        keyword = {"score": row["kw_score"]}
+        level = final_level(keyword, result)
+        updated = conn.execute(
+            """
+            UPDATE messages
+            SET ai_urgency = ?, ai_reason = ?, ai_summary = ?,
+                ai_people_affected = ?, ai_status = 'done', level = ?
+            WHERE id = ? AND ai_status = 'pending'
+            """,
+            (
+                urgency,
+                result["reason"],
+                result["summary"],
+                result["people_affected"],
+                level,
+                msg_id,
+            ),
+        )
+        conn.commit()
+        return updated.rowcount > 0
+    finally:
+        conn.close()
+
+
+def mark_ai_offline(msg_id: str, db_path: str = DB_PATH) -> bool:
+    conn = _connect(db_path)
+    try:
+        updated = conn.execute(
+            "UPDATE messages SET ai_status = 'offline' WHERE id = ? AND ai_status = 'pending'",
+            (msg_id,),
+        )
+        conn.commit()
+        return updated.rowcount > 0
+    finally:
+        conn.close()
+
+
+def mark_pending_ai_offline(db_path: str = DB_PATH) -> int:
+    """Mark work interrupted by a prior process exit as unavailable, without retrying."""
+    conn = _connect(db_path)
+    try:
+        updated = conn.execute(
+            "UPDATE messages SET ai_status = 'offline' WHERE ai_status = 'pending'"
+        )
+        conn.commit()
+        return updated.rowcount
+    finally:
+        conn.close()
 
 
 def list_messages(since: str | None = None, db_path: str = DB_PATH):
