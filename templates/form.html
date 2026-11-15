@@ -8,7 +8,7 @@
 :root{--bg:#f6f5f1;--ink:#1b1f23;--mute:#5d646b;--line:#cfd2d4;--go:#0b5cab;--ok:#1a7f4b;--bad:#b3261e}
 @media(prefers-color-scheme:dark){:root{--bg:#14171a;--ink:#eef0f1;--mute:#9aa2a8;--line:#343a40;--go:#5aa2ee;--ok:#4cc88a;--bad:#ff8a80}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.45 Georgia,serif}
+body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 main{max-width:30rem;margin:0 auto;padding:1.25rem}
 h1{font-size:1.6rem;margin:.2rem 0 .3rem}
 p.s{color:var(--mute);margin:0 0 1.2rem}
@@ -20,7 +20,7 @@ input,textarea{width:100%}
 textarea{min-height:6rem;resize:vertical}
 .hint{color:var(--mute);font-size:.85rem;font-weight:400}
 #cnt{color:var(--mute);font-size:.85rem;text-align:right}
-#go,#sos{width:100%;padding:1rem;font:700 1.1rem Georgia,serif;border:0;border-radius:.5rem}
+#go,#sos{width:100%;padding:1rem;font:700 1.1rem system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;border:0;border-radius:.5rem}
 #sos{background:#b3261e;color:#fff;margin:0 0 1rem}
 #go{background:var(--go);color:#fff;margin-top:1.2rem}
 #go:disabled,#sos:disabled{opacity:.6}
@@ -112,7 +112,7 @@ async function submit(sos){
       rememberId(j.id);
       m.style.color="var(--ok)";
       m.textContent="Sent as "+j.id+". Opening your requests…";
-      location.href=j.redirect||("/requests?focus="+encodeURIComponent(j.id));
+      location.href=j.redirect||("/status/"+encodeURIComponent(j.id));
       return;
     }
     m.style.color="var(--bad)";

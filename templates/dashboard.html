@@ -8,7 +8,7 @@
 :root{--bg:#f3f4f2;--card:#fff;--ink:#16191c;--mute:#5b6268;--line:#d5d8da;--high:#b3261e;--med:#d9622b;--low:#2f7d5b}
 @media(prefers-color-scheme:dark){:root{--bg:#121416;--card:#1b1e21;--ink:#eceeef;--mute:#98a0a6;--line:#33383d;--high:#ff7b70;--med:#ff9a62;--low:#5fcf9a}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 Georgia,serif}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 header{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;justify-content:space-between;padding:1rem 1.5rem;border-bottom:1px solid var(--line)}
 h1{font-size:1.3rem;margin:0}
 #stats{color:var(--mute)}
@@ -41,6 +41,29 @@ h1{font-size:1.3rem;margin:0}
 @media(max-width:560px){.m{grid-template-columns:4.5rem 1fr}.act{grid-column:1/-1}}
 @keyframes flash{from{background:color-mix(in srgb,var(--c) 30%,var(--card))}}
 .m.fresh{animation:flash 1.5s}
+body.blackout{--bg:#000;--card:#000;--ink:#fff;--mute:#ddd;--line:#aaa;--high:#ff5252;--med:#ffc247;--low:#ccc;background:#000;color:#fff;font:18px/1.45 system-ui,sans-serif}
+.blackout *,body.blackout *{box-shadow:none!important;text-shadow:none!important;transition:none!important;animation:none!important;background-image:none!important}
+.blackout .map-panel:not(.map-open){display:none}
+.blackout .map-wrap{background:#000;border:3px solid #fff}
+.blackout .map-wrap img,.blackout #radar{display:none}
+.blackout .m{background:#000;border:3px solid var(--c);border-left:8px solid var(--c);border-radius:0}
+.blackout .m.resolved{opacity:1}
+.blackout .m.selected{outline:3px solid #fff;outline-offset:2px}
+.blackout .m.fresh{outline:4px solid #fff;position:relative}
+.blackout .m.fresh::before{content:"NEW";position:absolute;right:.4rem;top:.35rem;z-index:3;background:#000;color:#fff;border:2px solid #fff;padding:.1rem .35rem;font:700 .75rem system-ui;letter-spacing:.08em}
+.blackout .u{font-size:1.15rem}
+.blackout .map-panel h2{font-size:1.125rem}
+.blackout #mapLabel{font-size:1rem}
+.blackout .t{font-size:1.125rem}
+.blackout .meta,.blackout .sec,.blackout #blackoutStatus,.blackout .act button,.blackout .act input,.blackout .tools button,.blackout .floors button{font-size:1rem}
+.blackout .pin{box-shadow:none!important}
+.blackout .floors button,.blackout .tools button,.blackout .act button,.blackout .act input{border:2px solid #fff}
+.blackout #sosBanner{background:#000!important;color:#fff!important;border:3px solid var(--high)}
+#blackoutStatus{color:var(--mute);font: .85rem/1.4 system-ui,sans-serif;text-align:center;padding:.5rem}
+#mapToggle,#lowBattery{display:none}
+body.blackout #mapToggle{display:inline-block}
+#lowBattery{margin:.75rem;padding:.8rem;border:2px solid var(--med);background:var(--card);color:var(--ink)}
+@media(prefers-reduced-motion:reduce){.m.fresh{animation:none}}
 </style>
 </head>
 <body>
@@ -52,9 +75,12 @@ h1{font-size:1.3rem;margin:0}
   <div class="tools">
     <button id="alarmBtn" type="button">Alarm on</button>
     <button id="sim" type="button">Simulate message</button>
+    <button id="blackoutBtn" type="button" aria-pressed="false">Blackout mode off</button>
+    <button id="mapToggle" type="button">Show map</button>
     <button id="clr" type="button">Clear all</button>
   </div>
 </header>
+<div id="lowBattery" role="status">Battery low. Turn on blackout mode? <button id="batteryBlackout" type="button">Turn on</button></div>
 <div id="sosBanner" hidden style="background:#b3261e;color:#fff;padding:.8rem 1.2rem;font-weight:700">SOS — open emergency on the map</div>
 <div class="layout">
   <section class="map-panel">
@@ -68,6 +94,7 @@ h1{font-size:1.3rem;margin:0}
   </section>
   <section id="list"><div class="empty">No messages yet. Waiting for the radio.</div></section>
 </div>
+<footer id="blackoutStatus">Blackout mode off · alarm on</footer>
 <script>
 const COL={HIGH:"var(--high)",MEDIUM:"var(--med)",LOW:"var(--low)"};
 const COL_HEX={HIGH:"#b3261e",MEDIUM:"#d9622b",LOW:"#2f7d5b"};
@@ -428,19 +455,26 @@ function makeCard(r){
   if(r.status!=="resolved"){
     const inp=el("input");
     inp.type="text";
-    inp.maxLength=40;
+    inp.maxLength=50;
     inp.placeholder="Optional reply to sender";
     inp.id="reply-"+r.id;
     inp.value=replyDrafts[r.id]||"";
     inp.oninput=()=>{replyDrafts[r.id]=inp.value;};
     a.append(inp);
   }
-  if(r.status!=="ack" && r.status!=="resolved"){
+  if(r.status!=="ack" && r.status!=="on_way" && r.status!=="resolved"){
     const b=el("button","","Acknowledge");
     b.onclick=()=>setStatus(r.id,"ack");
     a.append(b);
   }else if(r.status==="ack"){
     a.append(el("div","meta","Acknowledged"));
+  }else if(r.status==="on_way"){
+    a.append(el("div","meta","On the way"));
+  }
+  if(r.status!=="on_way" && r.status!=="resolved"){
+    const b=el("button","","On my way");
+    b.onclick=()=>setStatus(r.id,"on_way");
+    a.append(b);
   }
   if(r.status!=="resolved"){
     const b=el("button","","Resolve");
@@ -546,9 +580,54 @@ function syncAlarm(rows){
 document.getElementById("alarmBtn").onclick=()=>{
   alarmMuted=!alarmMuted;
   document.getElementById("alarmBtn").textContent=alarmMuted?"Alarm off":"Alarm on";
+  document.getElementById("blackoutStatus").textContent=
+    "Blackout mode "+(document.body.classList.contains("blackout")?"on":"off")+" · alarm "+(alarmMuted?"off":"on");
   if(alarmMuted){stopAlarm(); if(window.speechSynthesis) speechSynthesis.cancel();}
   else syncAlarm(rowsCache);
 };
+function setBlackout(enabled, remember=true){
+  document.body.classList.toggle("blackout",enabled);
+  const button=document.getElementById("blackoutBtn");
+  button.textContent=enabled?"Blackout mode on":"Blackout mode off";
+  button.setAttribute("aria-pressed",enabled?"true":"false");
+  document.getElementById("blackoutStatus").textContent=
+    "Blackout mode "+(enabled?"on":"off")+" · alarm "+(alarmMuted?"off":"on");
+  if(remember){
+    try{localStorage.setItem("om_blackout",enabled?"1":"0")}catch(e){}
+  }
+  if(enabled){
+    if(radarRaf) cancelAnimationFrame(radarRaf);
+    radarRaf=0;
+  }else if(!radarRaf){
+    radarRaf=requestAnimationFrame(radarLoop);
+  }
+}
+document.getElementById("blackoutBtn").onclick=()=>{
+  setBlackout(!document.body.classList.contains("blackout"));
+};
+document.getElementById("mapToggle").onclick=()=>{
+  const panel=document.querySelector(".map-panel");
+  panel.classList.toggle("map-open");
+  document.getElementById("mapToggle").textContent=
+    panel.classList.contains("map-open")?"Hide map":"Show map";
+};
+document.getElementById("batteryBlackout").onclick=()=>{
+  document.getElementById("lowBattery").style.display="none";
+  setBlackout(true);
+};
+try{setBlackout(localStorage.getItem("om_blackout")==="1",false)}catch(e){setBlackout(false,false)}
+if(navigator.getBattery){
+  navigator.getBattery().then(battery=>{
+    if(battery.level<0.2 && !battery.charging){
+      let alreadyPrompted=false;
+      try{alreadyPrompted=localStorage.getItem("om_low_battery_prompted")==="1"}catch(e){}
+      if(!alreadyPrompted){
+        document.getElementById("lowBattery").style.display="block";
+        try{localStorage.setItem("om_low_battery_prompted","1")}catch(e){}
+      }
+    }
+  }).catch(()=>{});
+}
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
 document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();stopAlarm();await load(true);}};
 load(true);

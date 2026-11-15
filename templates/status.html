@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Help is coming</title>
+<style>
+:root{--bg:#f6f5f1;--card:#fff;--ink:#1b1f23;--mute:#5d646b;--line:#cfd2d4;--accent:#0b5cab;--ok:#1a7f4b;--warn:#9a6b00;--bad:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#000;--card:#000;--ink:#fff;--mute:#ddd;--line:#aaa;--accent:#8fc2ff;--ok:#82e0a9;--warn:#ffd166;--bad:#ff8585}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:20px/1.5 system-ui,sans-serif}
+main{max-width:38rem;margin:0 auto;padding:2rem 1.25rem;text-align:center}
+.icon{width:7rem;height:7rem;margin:0 auto 1.2rem;border:4px solid var(--accent);border-radius:50%;display:grid;place-items:center;font-size:3.2rem;color:var(--accent);animation:pulse 2s ease-out infinite}
+h1{font-size:clamp(1.7rem,7vw,2.4rem);line-height:1.2;margin:.5rem 0}
+.id,.sub{color:var(--mute)}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin:2rem 0}
+.step{border-top:6px solid var(--line);padding:.6rem .2rem;color:var(--mute);font-size:.9rem}
+.step.active{border-color:var(--ok);color:var(--ink);font-weight:700}
+#note{display:none;text-align:left;background:var(--card);border:2px solid var(--accent);border-radius:.5rem;padding:1rem;margin:1.5rem 0}
+#warning{display:none;color:var(--warn);font-weight:700;margin:1.2rem 0}
+#sendError{display:none;color:var(--bad);font-weight:700;margin:1rem 0}
+button,a{font:inherit}
+button{padding:.75rem 1rem;border:2px solid var(--line);border-radius:.5rem;background:var(--card);color:var(--ink);cursor:pointer}
+nav{margin-top:2rem;font-size:1rem}
+nav a{color:var(--accent);margin:0 .5rem}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 35%,transparent)}70%{box-shadow:0 0 0 1.2rem transparent}100%{box-shadow:0 0 0 0 transparent}}
+@media(prefers-reduced-motion:reduce){.icon{animation:none}}
+body.blackout{--bg:#000;--card:#000;--ink:#fff;--mute:#ddd;--line:#aaa;--accent:#fff;--ok:#fff;--warn:#ffd166;--bad:#ff8585}
+body.blackout *,body.blackout *::before,body.blackout *::after{animation:none!important;transition:none!important;box-shadow:none!important;background-image:none!important}
+</style>
+</head>
+<body>
+<main>
+  <div class="icon" aria-hidden="true">♥</div>
+  <div class="id">Request <strong id="requestId"></strong></div>
+  <h1 id="headline">Sending…</h1>
+  <p class="sub">Keep this page open for updates from responders.</p>
+  <div class="steps" aria-label="Request progress">
+    <div class="step" id="stepSent">Sent</div>
+    <div class="step" id="stepHeard">Heard</div>
+    <div class="step" id="stepWay">On the way</div>
+  </div>
+  <div id="note"><strong>Responder note</strong><div id="noteText"></div></div>
+  <div id="warning">Still trying. If you are in danger, move to the nearest Help Desk.</div>
+  <div id="sendError"></div>
+  <button id="retry" type="button" hidden>Retry sending</button>
+  <nav><a href="/">Send another request</a><a href="/requests">My requests</a></nav>
+</main>
+<script>
+const id={{ msg_id|tojson }};
+document.getElementById("requestId").textContent=id;
+if(new URLSearchParams(location.search).get("blackout")==="1"){
+  document.body.classList.add("blackout");
+}
+function setStep(step,active){
+  document.getElementById(step).classList.toggle("active",active);
+}
+function render(data){
+  const state=data.state;
+  const headlines={
+    SENDING:"Sending…",
+    SENT:"Request sent",
+    HEARD:"Responders heard you",
+    ON_WAY:"Help is on the way",
+    DONE:"Help has arrived or request closed",
+    FAILED:"Could not send."
+  };
+  document.getElementById("headline").textContent=
+    data.send_state==="retrying"?"Could not send. Retrying…":(headlines[state]||"Sending…");
+  setStep("stepSent",["SENT","HEARD","ON_WAY","DONE"].includes(state));
+  setStep("stepHeard",["HEARD","ON_WAY","DONE"].includes(state));
+  setStep("stepWay",["ON_WAY","DONE"].includes(state));
+  const note=document.getElementById("note");
+  note.style.display=data.note?"block":"none";
+  document.getElementById("noteText").textContent=data.note||"";
+  const sentAt=Date.parse(data.updated||"");
+  document.getElementById("warning").style.display=
+    !["HEARD","ON_WAY","DONE"].includes(state) && sentAt && Date.now()-sentAt>=90000
+      ?"block":"none";
+  const failed=state==="FAILED";
+  const error=document.getElementById("sendError");
+  error.textContent=failed?"Radio did not confirm after three attempts. Check the help point connection.":"";
+  error.style.display=failed?"block":"none";
+  document.getElementById("retry").hidden=!failed;
+}
+async function load(){
+  try{
+    const response=await fetch("/api/status/"+encodeURIComponent(id),{cache:"no-store"});
+    if(response.ok) render(await response.json());
+  }catch(e){}
+  setTimeout(load,2000);
+}
+document.getElementById("retry").onclick=async()=>{
+  const button=document.getElementById("retry");
+  button.disabled=true;
+  try{
+    await fetch("/api/status/"+encodeURIComponent(id)+"/retry",{method:"POST"});
+  }finally{
+    button.disabled=false;
+  }
+};
+load();
+</script>
+</body>
+</html>
