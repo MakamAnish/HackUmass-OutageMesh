@@ -88,9 +88,9 @@ def test_receiver_status_route_enqueues_ack_without_sending_in_request(monkeypat
     assert sent_event.wait(1)
     assert sent == ["ACK|A47|ON_WAY|Help soon"]
     dashboard = receiver_app.app.test_client().get("/")
-    assert b"Blackout mode off" in dashboard.data
+    assert b"Blackout" not in dashboard.data
     assert b"On my way" in dashboard.data
-    assert b"navigator.getBattery" in dashboard.data
+    assert b"OUTAGE MESH" in dashboard.data
     assert b"https://" not in dashboard.data
 
 
@@ -148,6 +148,10 @@ def test_sender_redirects_to_status_and_accepts_status_ack(monkeypatch):
     assert status.json["state"] == "HEARD"
     assert status.json["note"] == "We heard you"
     assert page.status_code == 200
+    assert b"Send another request" in page.data
+    assert b"My requests" in page.data
+    assert b"nav-button" in page.data
+    assert b"blackout" not in page.data.lower()
     assert b"Help is on the way" in page.data
 
 
