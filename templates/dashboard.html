@@ -44,7 +44,7 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
 .sec::before{content:"";width:.55rem;height:.55rem;border-radius:50%;background:var(--mute)}
 .sec.high::before{background:var(--high)}.sec.medium::before{background:var(--med)}.sec.low::before{background:var(--low)}
 .m{position:relative;display:grid;grid-template-columns:5.2rem minmax(0,1fr) minmax(10rem,12rem);gap:1rem;align-items:start;background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--c);border-radius:.95rem;padding:1rem;margin-bottom:.7rem;box-shadow:0 4px 14px rgba(24,43,69,.045);cursor:pointer;transition:transform .15s ease,box-shadow .15s ease}
-.m.sos{padding-bottom:2.7rem}
+.m.has-alarm{padding-bottom:2.7rem}
 .sos-alarm{position:absolute;left:.85rem;bottom:.65rem;z-index:4;font:750 .74rem system-ui,sans-serif;padding:.4rem .7rem;border-radius:.65rem;border:1px solid color-mix(in srgb,var(--high) 42%,var(--line));background:color-mix(in srgb,var(--high) 12%,var(--surface));color:var(--high);pointer-events:auto}
 .m:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
 .m.selected{outline:2px solid color-mix(in srgb,var(--blue) 65%,transparent);outline-offset:1px}
@@ -60,7 +60,7 @@ button{font:inherit;cursor:pointer;transition:transform .15s ease,filter .15s ea
 .act button.on-way{border-color:color-mix(in srgb,var(--teal) 40%,var(--line));background:color-mix(in srgb,var(--teal) 11%,var(--surface));color:var(--teal)}
 .act button.resolve{background:var(--navy);border-color:var(--navy);color:#fff}
 .empty{color:var(--mute);padding:2rem;text-align:center;background:var(--surface);border:1px dashed var(--line);border-radius:1rem}
-@media(max-width:560px){header{align-items:flex-start}.tools{width:100%}.tools button{flex:1}.m{grid-template-columns:4.6rem minmax(0,1fr)}.m.sos{padding-bottom:3.2rem}.act{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.act input{grid-column:1/-1}.act button{padding:.6rem .35rem;font-size:.74rem}}
+@media(max-width:560px){header{align-items:flex-start}.tools{width:100%}.tools button{flex:1}.m{grid-template-columns:4.6rem minmax(0,1fr)}.m.has-alarm{padding-bottom:3.2rem}.act{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.act input{grid-column:1/-1}.act button{padding:.6rem .35rem;font-size:.74rem}}
 @media(max-width:380px){.act{grid-template-columns:1fr}.act input{grid-column:auto}}
 @keyframes flash{from{background:color-mix(in srgb,var(--c) 24%,var(--surface))}}
 .m.fresh{animation:flash 1.5s}
@@ -483,7 +483,8 @@ function makeCard(r){
   const level=r.level||"LOW";
   const loc=locate(r);
   const sos=!!(r.sos||r.category==="SOS");
-  const d=el("div","m"+(sos?" sos":"")+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
+  const showAlarm=sos && r.status!=="resolved" && !mutedIds.has(sosId(r));
+  const d=el("div","m"+(sos?" sos":"")+(showAlarm?" has-alarm":"")+(r.status==="resolved"?" resolved":"")+(r.id===selected?" selected":"")+((!first&&!seen.has(r.id))?" fresh":""));
   d.style.setProperty("--c",COL[level]||COL.LOW);
   d.onclick=()=>{selected=r.id;viewMap=null;showMapFor(r);renderList(rowsCache);renderPins(rowsCache);renderFloorTabs();};
   const u=el("div","u",level);
@@ -528,12 +529,15 @@ function makeCard(r){
     a.append(b);
   }
   d.append(u,mid,a);
-  if(sos && r.status!=="resolved"){
-    const alarm=el("button","sos-alarm",alarmLabel());
+  if(showAlarm){
+    const alarm=el("button","sos-alarm","Alarm off");
     alarm.type="button";
-    alarm.setAttribute("aria-pressed", alarmMuted?"true":"false");
-    alarm.addEventListener("click", toggleAlarm, true);
-    alarm.addEventListener("pointerdown", e=>{e.stopPropagation();}, true);
+    alarm.addEventListener("pointerdown", e=>dismissAlarm(e,r,alarm), true);
+    alarm.addEventListener("click", e=>{
+      e.preventDefault();
+      e.stopPropagation();
+      if(e.detail===0) dismissAlarm(e,r,alarm);
+    }, true);
     d.append(alarm);
   }
   seen.add(r.id);
@@ -601,22 +605,21 @@ async function load(force){
   first=false;
 }
 
-let alarmMuted=false, audioCtx=null, alarmTimer=null, announced=new Set();
+let audioCtx=null, alarmTimer=null, alarmGen=0, announced=new Set(), mutedIds=new Set();
 function sosId(r){return String(r&&r.id||"").toUpperCase()}
-function alarmLabel(){return alarmMuted?"Alarm on":"Alarm off"}
-function refreshAlarmButtons(){
-  document.querySelectorAll(".sos-alarm").forEach(b=>{
-    b.textContent=alarmLabel();
-    b.setAttribute("aria-pressed", alarmMuted?"true":"false");
-  });
+function openSos(rows){return (rows||[]).filter(r=>(r.sos||r.category==="SOS") && r.status!=="resolved")}
+function alarmSilenced(){
+  const open=openSos(rowsCache);
+  return !open.length || open.every(r=>mutedIds.has(sosId(r)));
 }
 function chokeSpeech(){
   if(!window.speechSynthesis) return;
   try{speechSynthesis.cancel();}catch(e){}
-  requestAnimationFrame(()=>{try{if(alarmMuted) speechSynthesis.cancel();}catch(e){}});
-  setTimeout(()=>{try{if(alarmMuted) speechSynthesis.cancel();}catch(e){}}, 50);
+  requestAnimationFrame(()=>{try{if(alarmSilenced()) speechSynthesis.cancel();}catch(e){}});
+  setTimeout(()=>{try{if(alarmSilenced()) speechSynthesis.cancel();}catch(e){}}, 50);
 }
 function stopAlarm(){
+  alarmGen++;
   if(alarmTimer){clearInterval(alarmTimer);alarmTimer=null;}
   chokeSpeech();
   if(audioCtx){
@@ -625,21 +628,31 @@ function stopAlarm(){
     try{ctx.close();}catch(e){}
   }
 }
-function toggleAlarm(e){
+function startAlarmSound(){
+  if(alarmSilenced()) return;
+  if(!alarmTimer) alarmTimer=setInterval(beep, 700);
+  beep();
+}
+function dismissAlarm(e,r,btn){
   e.preventDefault();
   e.stopPropagation();
-  alarmMuted=!alarmMuted;
-  refreshAlarmButtons();
-  if(alarmMuted) stopAlarm();
-  else syncAlarm(rowsCache);
+  if(e.stopImmediatePropagation) e.stopImmediatePropagation();
+  mutedIds.add(sosId(r));
+  if(btn){
+    const card=btn.closest(".m");
+    btn.remove();
+    if(card) card.classList.remove("has-alarm");
+  }
+  if(alarmSilenced()) stopAlarm();
 }
 function beep(){
-  if(alarmMuted) return;
+  if(alarmSilenced()) return;
+  const gen=alarmGen;
   try{
     if(!audioCtx || audioCtx.state==="closed") audioCtx=new (window.AudioContext||window.webkitAudioContext)();
     const ctx=audioCtx;
     const play=()=>{
-      if(alarmMuted || audioCtx!==ctx || ctx.state==="closed") return;
+      if(alarmSilenced() || gen!==alarmGen || audioCtx!==ctx || ctx.state==="closed") return;
       const o=ctx.createOscillator();
       const g=ctx.createGain();
       o.type="square";
@@ -654,32 +667,37 @@ function beep(){
   }catch(e){}
 }
 function speakSos(){
-  if(alarmMuted || !window.speechSynthesis) return;
+  if(alarmSilenced() || !window.speechSynthesis) return;
   try{speechSynthesis.cancel();}catch(e){}
   const u=new SpeechSynthesisUtterance("SOS. Emergency help request.");
   u.rate=1;
-  u.onstart=()=>{if(alarmMuted) chokeSpeech();};
+  u.onstart=()=>{if(alarmSilenced()) chokeSpeech();};
   speechSynthesis.speak(u);
 }
 function syncAlarm(rows){
-  const open=(rows||[]).filter(r=>(r.sos||r.category==="SOS") && r.status!=="resolved");
+  const open=openSos(rows);
   const banner=document.getElementById("sosBanner");
   banner.hidden=!open.length;
   banner.textContent=open.length?("SOS — "+open.length+" open emergency request"+(open.length>1?"s":"")):"SOS";
-  if(!open.length){stopAlarm();return;}
-  const fresh=open.filter(r=>!announced.has(sosId(r)));
-  fresh.forEach(r=>announced.add(sosId(r)));
-  if(fresh.length){
-    alarmMuted=false;
-    refreshAlarmButtons();
-    fresh.forEach(()=>speakSos());
+  if(!open.length){
+    mutedIds.clear();
+    stopAlarm();
+    return;
   }
-  if(alarmMuted){stopAlarm();return;}
-  if(!alarmTimer) alarmTimer=setInterval(beep, 700);
-  beep();
+  const fresh=open.filter(r=>!announced.has(sosId(r)));
+  fresh.forEach(r=>{
+    announced.add(sosId(r));
+    mutedIds.delete(sosId(r));
+  });
+  if(fresh.length){
+    fresh.forEach(()=>speakSos());
+    renderList(rowsCache);
+  }
+  if(alarmSilenced()){stopAlarm();return;}
+  startAlarmSound();
 }
 document.getElementById("sim").onclick=async()=>{await fetch("/api/simulate",{method:"POST"});await load(true);};
-document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();stopAlarm();await load(true);}};
+document.getElementById("clr").onclick=async()=>{if(confirm("Delete all messages?")){await fetch("/api/clear",{method:"POST"});seen=new Set();first=true;selected=null;announced=new Set();mutedIds=new Set();stopAlarm();await load(true);}};
 load(true);
 setInterval(()=>load(false),2000);
 </script>
