@@ -529,12 +529,12 @@ function makeCard(r){
   }
   d.append(u,mid,a);
   if(sos && r.status!=="resolved"){
-    const alarm=el("button","sos-alarm",alarmMuted?"Alarm off":"Alarm on");
+    const alarm=el("button","sos-alarm",alarmLabel());
     alarm.type="button";
     alarm.onclick=e=>{
       e.stopPropagation();
       alarmMuted=!alarmMuted;
-      document.querySelectorAll(".sos-alarm").forEach(b=>b.textContent=alarmMuted?"Alarm off":"Alarm on");
+      refreshAlarmButtons();
       if(alarmMuted){stopAlarm(); if(window.speechSynthesis) speechSynthesis.cancel();}
       else syncAlarm(rowsCache);
     };
@@ -595,6 +595,10 @@ async function load(force){
 }
 
 let alarmMuted=false, audioCtx=null, alarmTimer=null, announced=new Set();
+function alarmLabel(){return alarmMuted?"Alarm on":"Alarm off"}
+function refreshAlarmButtons(){
+  document.querySelectorAll(".sos-alarm").forEach(b=>b.textContent=alarmLabel());
+}
 function stopAlarm(){
   if(alarmTimer){clearInterval(alarmTimer);alarmTimer=null;}
   if(audioCtx){try{audioCtx.suspend();}catch(e){}}
@@ -626,12 +630,15 @@ function syncAlarm(rows){
   banner.hidden=!open.length;
   banner.textContent=open.length?("SOS — "+open.length+" open emergency request"+(open.length>1?"s":"")):"SOS";
   if(!open.length){stopAlarm();return;}
-  open.forEach(r=>{
-    if(!announced.has(r.id)){
+  const fresh=open.filter(r=>!announced.has(r.id));
+  if(fresh.length){
+    alarmMuted=false;
+    refreshAlarmButtons();
+    fresh.forEach(r=>{
       announced.add(r.id);
       speakSos();
-    }
-  });
+    });
+  }
   if(alarmMuted){stopAlarm();return;}
   if(!alarmTimer) alarmTimer=setInterval(beep, 700);
 }
