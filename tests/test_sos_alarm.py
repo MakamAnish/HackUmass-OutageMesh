@@ -323,6 +323,82 @@ def test_acknowledge_does_not_silence_or_clear_the_sos(env, monkeypatch):
     assert sent == ["ACK|A101|HEARD|We heard you"]
 
 
+def test_resolve_sos_silences_alarm_without_leaving_noise(env, monkeypatch):
+    sent = []
+    monkeypatch.setattr(radio_worker, "send", lambda payload: sent.append(payload) or True)
+    monkeypatch.setattr(
+        env.app,
+        "set_status",
+        lambda mid, status, db_path=env.path: db.set_status(mid, status, db_path),
+    )
+    env.app.on_packet("A101|CC-1-X|SOS|Need immediate help")
+    assert env.app.alarm.is_active() is True
+
+    response = env.client.post(
+        "/api/messages/A101/status",
+        json={"status": "resolved", "reply_text": "All clear"},
+    )
+    env.app._ack_queue.join()
+
+    assert response.status_code == 200
+    assert response.json == {"ok": True, "queued": True}
+    assert env.app.alarm.is_active() is False
+    assert env.player.playing is False
+    assert env.client.get("/api/alarm/status").json == {"active": False}
+    stored = db.list_messages(db_path=env.path)[0]
+    assert stored["status"] == "resolved"
+    assert stored["sos"] == 1
+    assert sent == ["ACK|A101|DONE|All clear"]
+    # Resolve must not start a second playback after silencing.
+    assert env.player.play_calls == 1
+
+
+def test_resolve_one_of_two_sos_keeps_alarm_for_remaining(env, monkeypatch):
+    monkeypatch.setattr(radio_worker, "send", lambda payload: True)
+    monkeypatch.setattr(
+        env.app,
+        "set_status",
+        lambda mid, status, db_path=env.path: db.set_status(mid, status, db_path),
+    )
+    env.app.on_packet("A101|CC-1-X|SOS|Need immediate help")
+    env.app.on_packet("A102|CC-1-X|SOS|Still trapped")
+    assert env.player.play_calls == 1
+
+    env.client.post("/api/messages/A101/status", json={"status": "resolved"})
+    env.app._ack_queue.join()
+
+    assert env.app.alarm.is_active() is True
+    assert env.player.playing is True
+    assert env.player.play_calls == 1
+    open_sos = [
+        row
+        for row in db.list_messages(db_path=env.path)
+        if row["sos"] and row["status"] != "resolved"
+    ]
+    assert [row["id"] for row in open_sos] == ["A102"]
+
+
+def test_resolve_non_sos_does_not_touch_alarm(env, monkeypatch):
+    monkeypatch.setattr(radio_worker, "send", lambda payload: True)
+    monkeypatch.setattr(
+        env.app,
+        "set_status",
+        lambda mid, status, db_path=env.path: db.set_status(mid, status, db_path),
+    )
+    env.app.on_packet("A101|CC-1-X|SOS|Need immediate help")
+    env.app.on_packet("A201|CC-1-X|MED|Need medical assistance")
+
+    env.client.post("/api/messages/A201/status", json={"status": "resolved"})
+    env.app._ack_queue.join()
+
+    assert env.app.alarm.is_active() is True
+    assert env.player.playing is True
+    assert env.player.play_calls == 1
+    sos = next(row for row in db.list_messages(db_path=env.path) if row["id"] == "A101")
+    assert sos["status"] == "new"
+    assert sos["sos"] == 1
+
+
 def test_simulate_does_not_trigger_alarm(env):
     simulated = env.client.post("/api/simulate")
     assert simulated.status_code == 200

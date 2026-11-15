@@ -92,6 +92,14 @@ def api_map():
         return jsonify(json.load(fh))
 
 
+def _open_sos_rows():
+    return [
+        row
+        for row in list_messages()
+        if (row.get("sos") or row.get("category") == "SOS") and row.get("status") != "resolved"
+    ]
+
+
 @app.post("/api/messages/<mid>/status")
 def api_set_status(mid):
     data = request.get_json(silent=True) or {}
@@ -101,8 +109,16 @@ def api_set_status(mid):
     if status not in ack_statuses:
         return jsonify({"ok": False, "error": "status must be ack, on_way, or resolved"}), 400
     status_value = "ack" if status == "ack" else "resolved" if status == "resolved" else "on_way"
+    target = next(
+        (row for row in list_messages() if str(row.get("id", "")).upper() == str(mid).upper()),
+        None,
+    )
+    resolving_sos = status == "resolved" and _is_sos(target)
     set_status(mid, status_value)
     _ack_queue.put((mid.upper(), ack_statuses[status], sanitize(reply_text)[:50]))
+    # Resolving SOS must quiet the speaker once no open SOS remain.
+    if resolving_sos and not _open_sos_rows():
+        alarm.stop()
     return jsonify({"ok": True, "queued": True})
 
 
