@@ -101,7 +101,7 @@ const COL_HEX={HIGH:"#b3261e",MEDIUM:"#d9622b",LOW:"#2f7d5b"};
 const ORDER=["HIGH","MEDIUM","LOW"];
 let seen=new Set(), first=true, selected=null, helpPoints=null, rowsCache=[];
 const replyDrafts={};
-let viewMap=null; // manual floor tab, or null = follow selected message
+let viewMap=null;
 
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!==undefined)e.textContent=txt;return e}
 function typingReply(){
@@ -144,10 +144,6 @@ function renderFloorTabs(){
     b.onclick=()=>{viewMap=key; const sel=rowsCache.find(r=>r.id===selected); if(sel) showMapFor(sel); else showMapKey(key); renderPins(rowsCache); renderFloorTabs();};
     box.append(b);
   });
-  const auto=el("button","","Follow selected");
-  if(!viewMap) auto.classList.add("active");
-  auto.onclick=()=>{viewMap=null; const sel=rowsCache.find(r=>r.id===selected); if(sel) showMapFor(sel); renderPins(rowsCache); renderFloorTabs();};
-  box.append(auto);
 }
 
 function showMapKey(mapKey, subtitle){
