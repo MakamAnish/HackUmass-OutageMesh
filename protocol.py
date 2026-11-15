@@ -8,7 +8,7 @@ from pathlib import Path
 
 CATEGORIES = ("MED", "TRAP", "WATER", "SAFE", "OTHER", "SOS")
 MAX_TEXT = 60
-MAX_ACK_TEXT = 40
+MAX_ACK_TEXT = 50
 MAX_PAYLOAD = 100
 NO_ROOM = "X"
 
@@ -133,18 +133,46 @@ def _decode_status(payload: str, kind: str) -> dict | None:
     return {"id": msg_id, "text": text[:MAX_ACK_TEXT]}
 
 
-def encode_ack(msg_id: str, reply_text: str = "") -> str:
-    """Responder -> help point: ACK|A47 or ACK|A47|optional reply."""
-    return _encode_status("ACK", msg_id, reply_text)
+ACK_STATES = ("HEARD", "ON_WAY", "DONE")
+
+
+def encode_ack(msg_id: str, status: str = "HEARD", note: str = "") -> str:
+    """Responder -> help point: ACK|A47|HEARD|optional note."""
+    # Keep accepting the former encode_ack(id, note) call shape.
+    if status not in ACK_STATES:
+        note, status = status, "HEARD"
+    msg_id = str(msg_id or "").strip().upper()
+    if not _ID_RE.match(msg_id):
+        raise ValueError(f"bad id: {msg_id!r}")
+    clean_note = sanitize(note)[:MAX_ACK_TEXT]
+    payload = f"ACK|{msg_id}|{status}|{clean_note}"
+    if len(payload.encode()) > MAX_PAYLOAD:
+        raise ValueError(f"ack too long: {len(payload)} bytes")
+    return payload
 
 
 def decode_ack(payload: str) -> dict | None:
-    """Return {id, text} if payload is an ACK, else None."""
+    """Decode new status ACKs and retain compatibility with the former format."""
+    parts = (payload or "").strip().split("|", 3)
+    if len(parts) == 4 and parts[0].upper() == "ACK":
+        if parts[2] not in ACK_STATES:
+            return None
+        msg_id = parts[1].strip().upper()
+        if not _ID_RE.match(msg_id):
+            return None
+        note = sanitize(parts[3])[:MAX_ACK_TEXT] if len(parts) == 4 else ""
+        return {
+            "id": msg_id,
+            "status": parts[2],
+            "note": note,
+        }
+    if parts and parts[0].upper() == "ACK" and len(parts) > 3:
+        return None
     return _decode_status(payload, "ACK")
 
 
 def encode_done(msg_id: str, reply_text: str = "") -> str:
-    """Responder -> help point: DONE|A47 or DONE|A47|optional note."""
+    """Legacy responder -> help point completion packet."""
     return _encode_status("DONE", msg_id, reply_text)
 
 

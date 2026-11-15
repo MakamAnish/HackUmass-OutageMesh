@@ -2,6 +2,8 @@
 import json
 import logging
 import os
+import threading
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,20 +30,35 @@ CATS = {"MED": "Medical", "TRAP": "Trapped", "WATER": "Water", "SAFE": "Safe", "
 
 
 def _on_packet(payload: str, rssi: int | None, snr: float | None) -> None:
+    ack = decode_ack(payload)
+    if ack is not None:
+        status = ack.get("status", "HEARD")
+        note = ack.get("note", ack.get("text", ""))
+        if not outgoing.record_ack(ack["id"], status, note):
+            return
+        log.info("%s for %s note=%r rssi=%s", status, ack["id"], note, rssi)
+        return
     done = decode_done(payload)
     if done is not None:
-        outgoing.mark_resolved(done["id"], done.get("text") or None)
+        if not outgoing.record_ack(done["id"], "DONE", done.get("text", "")):
+            return
         log.info("DONE for %s note=%r rssi=%s", done["id"], done.get("text"), rssi)
-        return
-    ack = decode_ack(payload)
-    if ack is None:
-        return
-    outgoing.mark_acked(ack["id"], ack.get("text") or None)
-    log.info("ACK for %s reply=%r rssi=%s", ack["id"], ack.get("text"), rssi)
 
 
 radio_worker.start(_on_packet)
 log.info("listening for responder ACKs")
+
+
+def _send_request(msg_id: str, packet: str) -> None:
+    for attempt in range(1, 4):
+        state = "sending" if attempt == 1 else "retrying"
+        outgoing.set_send_state(msg_id, state, attempt)
+        if radio_worker.send(packet):
+            outgoing.set_send_state(msg_id, "sent", attempt)
+            return
+        if attempt < 3:
+            time.sleep(1)
+    outgoing.set_send_state(msg_id, "failed", 3)
 
 
 @app.get("/")
@@ -82,24 +99,26 @@ def send():
         zone = make_zone(BUILDING, floor, room)
         msg_id = next_id(NODE_ID)
         packet = encode(msg_id, zone, category, text, range_m=range_m)
-        ok = radio_worker.send(packet)
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
+    outgoing.record(
+        msg_id,
+        zone,
+        category,
+        text,
+        client_id=client_id or None,
+        packet=packet,
+    )
+    try:
+        threading.Thread(
+            target=_send_request,
+            args=(msg_id, packet),
+            name=f"send-{msg_id}",
+            daemon=True,
+        ).start()
     except Exception as e:
-        log.exception("send failed")
-        return jsonify({
-            "ok": False,
-            "error": f"Radio error: {e}. Check RADIO_PORT in .env and that the Wio is plugged in.",
-        }), 500
-
-    if not ok:
-        err = radio_worker.health().get("error") or "Radio did not confirm TX DONE."
-        return jsonify({
-            "ok": False,
-            "error": f"{err} Check the board on {os.getenv('RADIO_PORT', '?')} (close Arduino Serial Monitor).",
-        }), 500
-
-    outgoing.record(msg_id, zone, category, text, client_id=client_id or None)
+        log.exception("Could not start radio send for %s", msg_id)
+        outgoing.set_send_state(msg_id, "failed", 0)
     return jsonify(
         {
             "ok": True,
@@ -107,9 +126,17 @@ def send():
             "zone": zone,
             "payload": packet,
             "range_m": range_m,
-            "redirect": url_for("requests_page") + f"?focus={msg_id}",
+            "redirect": url_for("status_page", msg_id=msg_id),
         }
     )
+
+
+@app.get("/status/<msg_id>")
+def status_page(msg_id):
+    row = outgoing.get_status(msg_id.upper())
+    if not row:
+        return "Request not found", 404
+    return render_template("status.html", msg_id=msg_id.upper())
 
 
 @app.get("/api/range")
@@ -152,6 +179,34 @@ def api_ack(msg_id):
             "zone": row.get("zone"),
         }
     )
+
+
+@app.get("/api/status/<msg_id>")
+def api_status(msg_id):
+    row = outgoing.get_status(msg_id.upper())
+    if not row:
+        return jsonify({"error": "Request not found"}), 404
+    return jsonify(row)
+
+
+@app.post("/api/status/<msg_id>/retry")
+def retry_send(msg_id):
+    row = outgoing.get_one(msg_id.upper())
+    if not row or row.get("send_state") != "failed" or not row.get("packet"):
+        return jsonify({"ok": False, "error": "Request is not ready to retry"}), 409
+    outgoing.set_send_state(msg_id.upper(), "sending", 0)
+    try:
+        threading.Thread(
+            target=_send_request,
+            args=(msg_id.upper(), row["packet"]),
+            name=f"retry-{msg_id.upper()}",
+            daemon=True,
+        ).start()
+    except Exception:
+        log.exception("Could not start radio retry for %s", msg_id)
+        outgoing.set_send_state(msg_id.upper(), "failed", row["send_attempts"])
+        return jsonify({"ok": False, "error": "Could not start radio retry"}), 500
+    return jsonify({"ok": True})
 
 
 @app.get("/sent/<msg_id>")

@@ -2,7 +2,10 @@
 import json
 import logging
 import os
+import queue
 import sqlite3
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,10 +14,11 @@ from flask import Flask, jsonify, render_template, request
 
 from db import DB_PATH, init as init_db, list_messages, set_status
 from ingest import ingest
-from protocol import encode_ack, encode_done
+from protocol import encode_ack, sanitize
 import radio_worker
 
 _sim_n = 0
+_ack_queue = queue.Queue()
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
@@ -24,6 +28,34 @@ MAP_PATH = Path(__file__).resolve().parent / "static" / "floorplans" / "help_poi
 
 app = Flask(__name__)
 init_db()
+
+
+def _send_ack_queue() -> None:
+    while True:
+        msg_id, ack_status, note = _ack_queue.get()
+        try:
+            payload = encode_ack(msg_id, ack_status, note)
+            for attempt in range(1, 4):
+                if radio_worker.send(payload):
+                    logging.getLogger("receiver").info(
+                        "%s ACK sent for %s", ack_status, msg_id
+                    )
+                    break
+                if attempt < 3:
+                    time.sleep(1)
+            else:
+                logging.getLogger("receiver").warning(
+                    "%s ACK failed after 3 tries for %s", ack_status, msg_id
+                )
+        except Exception:
+            logging.getLogger("receiver").exception(
+                "Could not send %s ACK for %s", ack_status, msg_id
+            )
+        finally:
+            _ack_queue.task_done()
+
+
+threading.Thread(target=_send_ack_queue, name="ack_sender", daemon=True).start()
 radio_worker.start(ingest)
 logging.getLogger("receiver").info("radio worker started")
 
@@ -50,29 +82,13 @@ def api_set_status(mid):
     data = request.get_json(silent=True) or {}
     status = data.get("status") or request.form.get("status")
     reply_text = (data.get("reply_text") or request.form.get("reply_text") or "").strip()
-    if status not in {"ack", "resolved"}:
-        return jsonify({"ok": False, "error": "status must be 'ack' or 'resolved'"}), 400
-    set_status(mid, status)
-    radio_ok = None
-    if status == "ack":
-        try:
-            radio_ok = radio_worker.send(encode_ack(mid, reply_text))
-            logging.getLogger("receiver").info(
-                "ACK sent for %s reply=%r ok=%s", mid, reply_text, radio_ok
-            )
-        except Exception as e:
-            radio_ok = False
-            logging.getLogger("receiver").warning("ACK radio send failed for %s: %s", mid, e)
-    elif status == "resolved":
-        try:
-            radio_ok = radio_worker.send(encode_done(mid, reply_text))
-            logging.getLogger("receiver").info(
-                "DONE sent for %s note=%r ok=%s", mid, reply_text, radio_ok
-            )
-        except Exception as e:
-            radio_ok = False
-            logging.getLogger("receiver").warning("DONE radio send failed for %s: %s", mid, e)
-    return jsonify({"ok": True, "radio_ack": radio_ok})
+    ack_statuses = {"ack": "HEARD", "on_way": "ON_WAY", "resolved": "DONE"}
+    if status not in ack_statuses:
+        return jsonify({"ok": False, "error": "status must be ack, on_way, or resolved"}), 400
+    status_value = "ack" if status == "ack" else "resolved" if status == "resolved" else "on_way"
+    set_status(mid, status_value)
+    _ack_queue.put((mid.upper(), ack_statuses[status], sanitize(reply_text)[:50]))
+    return jsonify({"ok": True, "queued": True})
 
 
 @app.get("/api/health")
